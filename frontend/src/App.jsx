@@ -4,6 +4,7 @@ import Navbar from './components/Navbar';
 import Dashboard from './pages/Dashboard';
 import Register from './pages/Register';
 import Issue from './pages/Issue';
+import BatchIssue from './pages/BatchIssue';
 
 import Verify from './pages/Verify';
 import Revoke from './pages/Revoke';
@@ -38,6 +39,7 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/register" element={<Register />} />
               <Route path="/issue" element={<Issue />} />
+              <Route path="/batch" element={<BatchIssue />} />
               
               <Route path="/verify" element={<Verify />} />
               <Route path="/revoke" element={<Revoke />} />

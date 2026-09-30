@@ -6,13 +6,13 @@ function Navbar() {
   return (
     <nav className="navbar">
       <div className="nav-brand">
-        <h2>TrustAnchor</h2>
+        <h2>ScholarLedger</h2>
       </div>
       <div className="nav-links">
         <NavLink to="/">Home</NavLink>
         <NavLink to="/register">Register</NavLink>
         <NavLink to="/issue">Issue</NavLink>
-        
+        <NavLink to="/batch">Batch Issue</NavLink>
         <NavLink to="/verify">Verify</NavLink>
         <NavLink to="/revoke">Revoke</NavLink>
         <NavLink to="/explorer">Explorer</NavLink>
