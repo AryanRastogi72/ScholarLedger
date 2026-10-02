@@ -3,4 +3,6 @@ artifacts/
 cache/
 frontend/node_modules/
 frontend/dist/
+batch-service/node_modules/
 .env
+git_setup.ps1

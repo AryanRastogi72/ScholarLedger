@@ -1,66 +1,154 @@
 # 🎓 ScholarLedger
 
-**A Forgery-Resistant Blockchain Credentialing System**  
-*CSD436 Blockchain Technology — Midsem Prototype*
+**Forgery-Resistant Blockchain Credentialing with Concurrent Batch Transaction Execution**
+*CSD436 Blockchain Technology — Course Project*
 
 ---
 
 ## 📖 Overview
-Existing blockchain credential systems often suffer from an **identity-spoofing vulnerability**—they anchor a document hash to the blockchain but fail to securely bind the *issuer's true identity* to their cryptographic key. 
 
-**ScholarLedger** solves this by introducing a decentralized identity registry. It enforces strict authorization at the smart contract level, ensuring that only verified universities can issue credentials.
+Existing blockchain-based credential systems anchor a document hash on-chain but fail to bind the **issuer's identity** to their cryptographic key. This creates an *identity-spoofing vulnerability* (Zonneveld et al., 2026): anyone with an Ethereum address can upload a fake degree hash, and a verifier has no way to distinguish it from a legitimate one.
 
-## ✨ Key Features
-- **🔐 Identity-Bound Issuance:** The `InstitutionRegistry` smart contract ensures only admin-whitelisted accounts can issue degrees.
-- **⛓️ Cryptographic Anchoring:** Student metadata is securely hashed using SHA-256 before being committed to the Ethereum blockchain, preserving privacy.
-- **⚡ Instant Verification:** Employers can verify the authenticity, issuer, and timestamp of a credential in seconds.
-- **🛡️ Forgery Prevention:** Built-in safeguards actively reject unauthorized issuance attempts (demonstrating the mitigation of the Block.co spoofing vulnerability).
+**ScholarLedger** closes this gap with two core innovations:
 
-## 🛠️ Tech Stack
-- **Smart Contracts:** Solidity `^0.8.20`
-- **Blockchain Network:** Local Ethereum Dev Environment (Hardhat)
-- **Frontend UI:** React + Vite (Plain CSS)
-- **Web3 Library:** ethers.js v6
+1. **Identity-Bound Issuance** — An on-chain `InstitutionRegistry` whitelists verified university addresses. The `CredentialManager` contract enforces that **only registered institutions** can issue credentials.
+2. **Optimistic Concurrency Control (OCC) Batch Engine** — An off-chain Node.js service inspired by Block-STM (Gelashvili et al., PPoPP 2023) that detects read/write conflicts among credential transactions and parallelizes non-conflicting ones, dramatically improving throughput during peak issuance periods (e.g., graduation season).
 
 ---
 
-## 🚀 Quick Start Guide
+## ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔐 **Identity-Bound Issuance** | Only admin-whitelisted institution EOAs can issue credentials on-chain |
+| ⛓️ **SHA-256 Credential Hashing** | Student metadata is hashed before anchoring — no PII on the public chain |
+| ⚡ **OCC Batch Processing** | Conflict-graph analysis + parallel submission of non-conflicting transactions |
+| 🌳 **Merkle Tree Anchoring** | Each batch computes a SHA-256 Merkle root stored on-chain for integrity auditing |
+| 🛡️ **Forgery Demo** | Interactive side-by-side comparison of a vulnerable system vs. ScholarLedger |
+| 🔍 **Instant Verification** | Gas-free `view` call — anyone with the hash can verify a credential |
+| ❌ **On-Chain Revocation** | Only the original issuer can revoke, with immutable audit trail |
+
+---
+
+## 🏗️ Architecture
+
+```
+┌──────────────────┐     ┌───────────────────┐     ┌──────────────────┐
+│   React Frontend │◄───►│  OCC Batch Service │◄───►│  Hardhat / EVM   │
+│   (Vite, port    │     │  (Express, port    │     │  (Local node,    │
+│    3000)          │     │   3001)            │     │   port 8545)     │
+└──────────────────┘     └───────────────────┘     └──────────────────┘
+        │                         │                         │
+   ethers.js v6              ethers.js v6            Solidity ^0.8.20
+   MetaMask wallet           OCC Engine              InstitutionRegistry
+   SHA-256 (WebCrypto)       Merkle Tree (crypto)    CredentialManager
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Smart Contracts | Solidity `^0.8.20` |
+| Local Blockchain | Hardhat (Ethereum dev node) |
+| Batch Engine | Node.js, Express, native `crypto` module |
+| Frontend | React 18 + Vite (Plain CSS, no frameworks) |
+| Web3 Integration | ethers.js v6, MetaMask |
+| Hashing | SHA-256 (browser `WebCrypto` API + Node.js `crypto`) |
+
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js (v18+ recommended)
-- [MetaMask](https://metamask.io/) browser extension
+- **Node.js** v18+
+- **MetaMask** browser extension
 
-### 1. Start the Blockchain
-Open a terminal in the project root and start your local Ethereum node:
+### Terminal 1 — Start Local Blockchain
 ```bash
+cd ScholarLedger
 npm install
 npx hardhat node
 ```
-*Keep this terminal running. It hosts the local blockchain at `http://127.0.0.1:8545`.*
 
-### 2. Deploy the Contracts
-Open a **second terminal** and deploy the smart contracts to your local network:
+### Terminal 2 — Deploy Contracts
 ```bash
+cd ScholarLedger
 npx hardhat run scripts/deploy.js --network localhost
 ```
 
-### 3. Start the Frontend Application
-In the same second terminal, navigate to the frontend folder and start the UI:
+### Terminal 3 — Start Batch Service
 ```bash
-cd frontend
+cd ScholarLedger/batch-service
+npm install
+node server.js
+```
+
+### Terminal 4 — Start Frontend
+```bash
+cd ScholarLedger/frontend
 npm install
 npm run dev
 ```
-*The web application will open at `http://localhost:3000`.*
 
-### 4. MetaMask Configuration
-To interact with the local blockchain:
-1. Open MetaMask and go to Settings > Networks > Add Network manually:
-   - **Network Name:** Hardhat Localhost
+Open **http://localhost:3000** in your browser.
+
+### MetaMask Setup
+1. Add a custom network:
    - **RPC URL:** `http://127.0.0.1:8545`
    - **Chain ID:** `31337`
-   - **Currency Symbol:** `ETH`
-2. Import the first Hardhat test account (Account #0) using its private key provided in the terminal. This account acts as the system **Admin** and has permission to register institutions.
+   - **Currency:** `ETH`
+2. Import Hardhat Account #0 (the admin/deployer):
+   - Private key: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
 
 ---
-*Developed by Aryan Rastogi (2310110439) & Raghav Garg (2310110697) for CSD436.*
+
+## 📂 Project Structure
+
+```
+ScholarLedger/
+├── contracts/
+│   ├── InstitutionRegistry.sol   # Identity registry (admin-only registration)
+│   └── CredentialManager.sol     # Credential issuance, verification, revocation
+├── scripts/
+│   └── deploy.js                 # Deploys contracts + exports ABIs to frontend
+├── test/
+│   └── TrustAnchor.test.js       # 13 unit tests (forgery prevention, access control)
+├── batch-service/
+│   ├── server.js                 # Express API (POST /api/batch/issue, /analyze)
+│   ├── occEngine.js              # OCC conflict detection + parallel grouping
+│   └── merkle.js                 # SHA-256 Merkle tree (Node.js crypto)
+├── frontend/
+│   ├── src/
+│   │   ├── pages/                # Dashboard, Register, Issue, BatchIssue, Verify,
+│   │   │                         # Revoke, Explorer, ForgeryDemo
+│   │   ├── components/           # Navbar, MetaMaskConnect, StatusBadge
+│   │   └── utils/                # Contract helpers, SHA-256 hashing
+│   └── index.html
+├── hardhat.config.js
+└── README.md
+```
+
+---
+
+## 🔬 How the OCC Engine Works
+
+1. **Input:** An array of credential transactions (studentId, programName, metadata).
+2. **Hash:** Each transaction's credential hash is computed with SHA-256.
+3. **Conflict Detection:** The engine builds read/write sets. Two transactions *conflict* if they share the same credential hash (duplicate issuance) or target the same credential for revocation.
+4. **Graph Coloring:** Non-conflicting transactions are grouped together using a conflict graph. Each color group can execute in parallel.
+5. **Parallel Submission:** Each group is submitted concurrently via `Promise.all` through ethers.js.
+6. **Merkle Root:** After all groups complete, a Merkle tree is built from all credential hashes and the root is stored on-chain via `storeMerkleRoot()`.
+
+---
+
+## 📚 References
+
+1. G. Zonneveld, G. Rafaiani, M. Baldi, *"A Forgery Attack on the Block.co Blockchain-Based Digital Credential Certification System,"* arXiv:2606.31462, 2026.
+2. R. Q. Saramago, H. Meling, L. N. Jehl, *"A Privacy-Preserving and Transparent Certification System for Digital Credentials,"* OPODIS 2022.
+3. A. Gelashvili et al., *"Block-STM: Scaling Blockchain Execution by Turning Ordering Curse to a Performance Blessing,"* PPoPP 2023.
+
+---
+
+*Developed by **Aryan Rastogi** (2310110439) & **Raghav Garg** (2310110697) for CSD436 Blockchain Technology.*
