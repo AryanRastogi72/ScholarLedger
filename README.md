@@ -148,6 +148,7 @@ ScholarLedger/
 1. G. Zonneveld, G. Rafaiani, M. Baldi, *"A Forgery Attack on the Block.co Blockchain-Based Digital Credential Certification System,"* arXiv:2606.31462, 2026.
 2. R. Q. Saramago, H. Meling, L. N. Jehl, *"A Privacy-Preserving and Transparent Certification System for Digital Credentials,"* OPODIS 2022.
 3. A. Gelashvili et al., *"Block-STM: Scaling Blockchain Execution by Turning Ordering Curse to a Performance Blessing,"* PPoPP 2023.
+4. G. Fernández-Blanco et al., *"A Blockchain Based System for Preventing Academic Forgery: Design and Practical Evaluation for CPU-Based and Low-Power Computers,"* IEEE BCCA 2024.
 
 ---
 
