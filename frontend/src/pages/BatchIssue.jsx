@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { deployedAddresses } from '../utils/contracts';
+import { downloadJson } from '../utils/credential';
 
 const BATCH_API = 'http://localhost:3001/api/batch';
 
@@ -10,6 +11,8 @@ function BatchIssue() {
   const [metrics, setMetrics] = useState(null);
   const [results, setResults] = useState(null);
   const [merkleRoot, setMerkleRoot] = useState(null);
+  const [credentials, setCredentials] = useState([]);
+  const [batchId, setBatchId] = useState(null);
 
   const addRow = () => setRows([...rows, { studentId: '', programName: '', metadata: '' }]);
 
@@ -75,6 +78,7 @@ function BatchIssue() {
       setMetrics(null);
       setResults(null);
       setMerkleRoot(null);
+      setCredentials([]);
       const payload = buildPayload();
       const res = await fetch(`${BATCH_API}/issue`, {
         method: 'POST',
@@ -84,8 +88,10 @@ function BatchIssue() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Execution failed');
       setMetrics(data.metrics);
-      setResults(data.results.flat().map(r => ({ studentId: r.tx.studentId, programName: r.tx.programName, success: r.success, txHash: r.result, error: r.error })));
+      setResults(data.results.flat().map(r => ({ studentId: r.tx.studentId, programName: r.tx.programName, commitment: r.tx.commitment, success: r.success, txHash: r.result, error: r.error })));
       setMerkleRoot(data.merkleRoot);
+      setCredentials(data.credentials);
+      setBatchId(data.batchId);
       setStatus(`Batch complete: ${data.metrics.succeeded} succeeded, ${data.metrics.failed} failed.`);
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -173,7 +179,9 @@ function BatchIssue() {
 
       {merkleRoot && (
         <div className="result-box" style={{ marginTop: '24px' }}>
-          <p>Merkle root: <code>{merkleRoot}</code></p>
+          <p>Batch id: {batchId} | Merkle root: <code>{merkleRoot}</code></p>
+          <button onClick={() => downloadJson(`scholarledger-batch-${batchId}.json`, credentials)}>Download all credential files</button>
+          <p style={{ color: 'var(--error-color)' }}>These files are the only copy of the student details. Give each to its student.</p>
         </div>
       )}
 
@@ -182,7 +190,7 @@ function BatchIssue() {
           <h3>Transaction Results</h3>
           <table>
             <thead>
-              <tr><th>Student ID</th><th>Program</th><th>Status</th><th>Tx Hash</th></tr>
+              <tr><th>Student ID</th><th>Program</th><th>Status</th><th>Tx Hash</th><th></th></tr>
             </thead>
             <tbody>
               {results.map((r, i) => (
@@ -191,6 +199,7 @@ function BatchIssue() {
                   <td>{r.programName}</td>
                   <td><span className={`badge ${r.success ? 'valid' : 'invalid'}`}>{r.success ? 'SUCCESS' : 'FAILED'}</span></td>
                   <td><code>{r.txHash ? `${r.txHash.slice(0, 10)}...${r.txHash.slice(-8)}` : r.error || '—'}</code></td>
+                  <td>{r.success && <button onClick={() => downloadJson(`scholarledger-${r.studentId}.json`, credentials.find(c => c.commitment === r.commitment))}>Download</button>}</td>
                 </tr>
               ))}
             </tbody>

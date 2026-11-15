@@ -4,7 +4,8 @@ const cors = require('cors');
 const { ethers } = require('ethers');
 const fs = require('fs');
 const path = require('path');
-const { sha256, buildMerkleTree } = require('./merkle');
+const { buildMerkleTree } = require('./merkle');
+const { newSalt, computeCommitment } = require('./credential');
 const { analyzeBatch, executeBatch } = require('./occEngine');
 
 const app = express();
@@ -32,10 +33,9 @@ function loadDeployment() {
   };
 }
 
-// Canonical hash: 0x + SHA-256 of "studentId|programName|metadata"
-function computeHash(tx) {
-  return '0x' + sha256(`${tx.studentId ?? ''}|${tx.programName ?? ''}|${tx.metadata ?? ''}`);
-}
+const trim = (v) => String(v ?? '').trim();
+// Conflict key: same student + program is one logical credential (salts make commitments unique)
+const conflictKey = (tx) => `${trim(tx.studentId)}|${trim(tx.programName)}`;
 
 function validateRows(transactions) {
   if (!transactions || !Array.isArray(transactions)) return 'transactions must be an array';
@@ -48,7 +48,12 @@ function validateRows(transactions) {
   return null;
 }
 
-const withHash = (transactions) => transactions.map(tx => ({ ...tx, credentialHash: computeHash(tx) }));
+// Each row gets its own salt and commitment
+const withCommitment = (transactions) => transactions.map(tx => {
+  const salt = newSalt();
+  const fields = { studentId: trim(tx.studentId), programName: trim(tx.programName), metadata: trim(tx.metadata) };
+  return { ...fields, salt, commitment: computeCommitment({ salt, ...fields }) };
+});
 
 // Routes
 app.get('/api/health', (req, res) => {
@@ -59,7 +64,7 @@ app.post('/api/batch/analyze', (req, res, next) => {
   try {
     const err = validateRows(req.body.transactions);
     if (err) return res.status(400).json({ error: err });
-    const analysis = analyzeBatch(withHash(req.body.transactions));
+    const analysis = analyzeBatch(withCommitment(req.body.transactions), conflictKey);
     res.json({ success: true, ...analysis });
   } catch (error) {
     next(error);
@@ -79,8 +84,8 @@ app.post('/api/batch/issue', async (req, res, next) => {
       return res.status(500).json({ error: e.message });
     }
 
-    const txsWithHash = withHash(transactions);
-    const analysis = analyzeBatch(txsWithHash);
+    const rows = withCommitment(transactions);
+    const analysis = analyzeBatch(rows, conflictKey);
 
     const provider = new ethers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(process.env.ISSUER_PRIVATE_KEY ?? HARDHAT_ACCOUNT_1_KEY, provider);
@@ -92,13 +97,16 @@ app.post('/api/batch/issue', async (req, res, next) => {
     // Dev nodes with automine reject out-of-order nonces, so submissions go out in nonce
     // order (queue below) while confirmations are awaited in parallel.
     let sendQueue = Promise.resolve();
+    const committedKeys = new Set(); // OCC validation: keys already committed in this request
     const executorFn = async (tx) => {
+      if (committedKeys.has(conflictKey(tx))) throw new Error('Duplicate of an earlier row in this batch');
       const nonce = nextNonce++; // taken synchronously, before any await
-      const sending = sendQueue.then(() => manager.issueCredential(tx.credentialHash, tx.studentId, tx.programName, { nonce, gasLimit: 500_000 }));
+      const sending = sendQueue.then(() => manager.issueCredential(tx.commitment, { nonce, gasLimit: 500_000 }));
       sendQueue = sending.catch(() => {});
       try {
         const sent = await sending;
         const receipt = await sent.wait(); // throws on revert
+        committedKeys.add(conflictKey(tx));
         return receipt.hash;
       } catch (e) {
         const m = /reason string '([^']+)'/.exec(e.message);
@@ -114,17 +122,43 @@ app.post('/api/batch/issue', async (req, res, next) => {
     const failed = flat.length - succeeded;
 
     let root = null;
+    let batchId = null;
+    let credentials = [];
     if (succeeded > 0) {
-      const tree = buildMerkleTree(ok.map(r => r.tx.credentialHash.slice(2)));
+      const tree = buildMerkleTree(ok.map(r => r.tx.commitment.slice(2)));
       root = '0x' + tree.root;
       const rootTx = await manager.storeMerkleRoot(root, succeeded, { nonce: nextNonce++, gasLimit: 200_000 });
-      await rootTx.wait();
+      const rootReceipt = await rootTx.wait();
+      for (const log of rootReceipt.logs) {
+        const ev = manager.interface.parseLog(log);
+        if (ev?.name === 'BatchProcessed') batchId = Number(ev.args.batchId);
+      }
+      const { chainId } = await provider.getNetwork();
+      const contract = await manager.getAddress();
+      credentials = ok.map((r, i) => ({
+        format: 'scholarledger-credential/1',
+        commitment: r.tx.commitment,
+        salt: r.tx.salt,
+        studentId: r.tx.studentId,
+        programName: r.tx.programName,
+        metadata: r.tx.metadata,
+        issuer: wallet.address,
+        chainId: Number(chainId),
+        contract,
+        issuedTx: r.result,
+        batch: { batchId, merkleRoot: root, leafIndex: i, proof: tree.proofs[i] }
+      }));
     }
+
+    // Do not return salts in the per-row results; they travel only inside `credentials`
+    const results = execResults.results.map(g => g.map(({ tx, ...rest }) => ({ ...rest, tx: { studentId: tx.studentId, programName: tx.programName, commitment: tx.commitment } })));
 
     return res.json({
       success: true,
-      results: execResults.results,
+      results,
       merkleRoot: root,
+      batchId,
+      credentials,
       metrics: {
         totalTxs: analysis.metrics.total_txs,
         parallelBatches: analysis.metrics.parallel_batches,

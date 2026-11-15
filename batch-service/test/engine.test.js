@@ -30,3 +30,15 @@ test('changing a leaf changes the root', () => {
   const b = [...a]; b[1] = '3'.repeat(64);
   assert.notStrictEqual(buildMerkleTree(a).root, buildMerkleTree(b).root);
 });
+
+test('commitment test vector and conflict key', () => {
+  const { computeCommitment } = require('../credential');
+  assert.strictEqual(
+    computeCommitment({ salt: '0'.repeat(64), studentId: 'S1', programName: 'BTech', metadata: '' }),
+    '0x2225df7e8e27bd1a06ead6224e43eecc4f02d8507b5a5f71aa31b7e695e22372'
+  );
+  const txs = [{ k: 'S1|B' }, { k: 'S1|B' }, { k: 'S2|B' }];
+  const r = analyzeBatch(txs, t => t.k);
+  assert.strictEqual(r.conflicts.length, 1);
+  assert.strictEqual(r.conflicts[0].reason, 'Same student and program');
+});

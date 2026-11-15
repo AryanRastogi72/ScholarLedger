@@ -10,8 +10,8 @@ function ForgeryDemo() {
       const signer = await getSigner();
       const manager = await getCredentialManagerContract(signer);
       // Attempt to issue a fake credential
-      const fakeHash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
-      const tx = await manager.issueCredential(fakeHash, 'FAKESTUDENT', 'Fake Degree');
+      const fakeCommitment = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+      const tx = await manager.issueCredential(fakeCommitment);
       await tx.wait();
       setStatus('Wait, this succeeded? This should not happen if not registered!');
     } catch (err) {

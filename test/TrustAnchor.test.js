@@ -55,8 +55,6 @@ describe("TrustAnchor Contracts", function () {
 
   describe("CredentialManager", function () {
     const credentialHash = ethers.keccak256(ethers.toUtf8Bytes("credential123"));
-    const studentId = "STU12345";
-    const programName = "B.S. Computer Science";
 
     beforeEach(async function () {
       await registry.registerInstitution(institution1.address, "State University", "state.edu");
@@ -64,7 +62,7 @@ describe("TrustAnchor Contracts", function () {
 
     it("Should issue a credential from registered institution", async function () {
       await expect(
-        manager.connect(institution1).issueCredential(credentialHash, studentId, programName)
+        manager.connect(institution1).issueCredential(credentialHash)
       ).to.emit(manager, "CredentialIssued");
 
       const [isValid, issuer, issuedAt, isRevoked] = await manager.verifyCredential(credentialHash);
@@ -75,18 +73,18 @@ describe("TrustAnchor Contracts", function () {
 
     it("Should reject issuance from unregistered address", async function () {
       await expect(
-        manager.connect(institution2).issueCredential(credentialHash, studentId, programName)
+        manager.connect(institution2).issueCredential(credentialHash)
       ).to.be.revertedWith("Issuer not registered");
     });
 
     it("Should verify a valid credential", async function () {
-      await manager.connect(institution1).issueCredential(credentialHash, studentId, programName);
+      await manager.connect(institution1).issueCredential(credentialHash);
       const [isValid] = await manager.verifyCredential(credentialHash);
       expect(isValid).to.be.true;
     });
 
     it("Should detect revoked credential", async function () {
-      await manager.connect(institution1).issueCredential(credentialHash, studentId, programName);
+      await manager.connect(institution1).issueCredential(credentialHash);
       await manager.connect(institution1).revokeCredential(credentialHash);
       
       const [isValid, , , isRevoked] = await manager.verifyCredential(credentialHash);
@@ -95,7 +93,7 @@ describe("TrustAnchor Contracts", function () {
     });
 
     it("Should only allow original issuer to revoke", async function () {
-      await manager.connect(institution1).issueCredential(credentialHash, studentId, programName);
+      await manager.connect(institution1).issueCredential(credentialHash);
       await registry.registerInstitution(institution2.address, "Other U", "other.edu");
       
       await expect(
@@ -104,9 +102,9 @@ describe("TrustAnchor Contracts", function () {
     });
 
     it("Should reject duplicate credential hash", async function () {
-      await manager.connect(institution1).issueCredential(credentialHash, studentId, programName);
+      await manager.connect(institution1).issueCredential(credentialHash);
       await expect(
-        manager.connect(institution1).issueCredential(credentialHash, "STU999", "Other Program")
+        manager.connect(institution1).issueCredential(credentialHash)
       ).to.be.revertedWith("Credential already exists");
     });
 
@@ -114,7 +112,47 @@ describe("TrustAnchor Contracts", function () {
       const merkleRoot = ethers.keccak256(ethers.toUtf8Bytes("root123"));
       await expect(
         manager.connect(institution1).storeMerkleRoot(merkleRoot, 100)
-      ).to.emit(manager, "BatchProcessed").withArgs(merkleRoot, 100);
+      ).to.emit(manager, "BatchProcessed").withArgs(0, merkleRoot, institution1.address, 100);
+    });
+
+    it("CredentialIssued has 3 inputs and none is a string", async function () {
+      const ev = manager.interface.getEvent("CredentialIssued");
+      expect(ev.inputs.length).to.equal(3);
+      ev.inputs.forEach(i => expect(i.type).to.not.equal("string"));
+    });
+
+    it("credentials() returns only issuer, issuedAt, isRevoked", async function () {
+      await manager.connect(institution1).issueCredential(credentialHash);
+      const c = await manager.credentials(credentialHash);
+      expect(c.length).to.equal(3);
+      expect(c.issuer).to.equal(institution1.address);
+      expect(c.issuedAt).to.be.gt(0n);
+      expect(c.isRevoked).to.be.false;
+    });
+
+    it("storeMerkleRoot stores root, issuer, count and increments batchId", async function () {
+      const r1 = ethers.keccak256(ethers.toUtf8Bytes("r1"));
+      const r2 = ethers.keccak256(ethers.toUtf8Bytes("r2"));
+      await manager.connect(institution1).storeMerkleRoot(r1, 7);
+      await expect(manager.connect(institution1).storeMerkleRoot(r2, 3))
+        .to.emit(manager, "BatchProcessed").withArgs(1, r2, institution1.address, 3);
+      const b = await manager.batches(0);
+      expect(b.merkleRoot).to.equal(r1);
+      expect(b.issuer).to.equal(institution1.address);
+      expect(b.count).to.equal(7n);
+      expect(await manager.getBatchCount()).to.equal(2n);
+    });
+
+    it("storeMerkleRoot rejects zero root, zero count and unregistered sender", async function () {
+      const r = ethers.keccak256(ethers.toUtf8Bytes("r"));
+      await expect(manager.connect(institution1).storeMerkleRoot(ethers.ZeroHash, 1)).to.be.revertedWith("Invalid root");
+      await expect(manager.connect(institution1).storeMerkleRoot(r, 0)).to.be.revertedWith("Empty batch");
+      await expect(manager.connect(institution2).storeMerkleRoot(r, 1)).to.be.revertedWith("Not a registered institution");
+    });
+
+    it("commitment test vector matches", async function () {
+      const c = "0x" + require("crypto").createHash("sha256").update("0".repeat(64) + "|S1|BTech|").digest("hex");
+      expect(c).to.equal("0x2225df7e8e27bd1a06ead6224e43eecc4f02d8507b5a5f71aa31b7e695e22372");
     });
   });
 });

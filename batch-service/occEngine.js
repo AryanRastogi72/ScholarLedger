@@ -8,10 +8,13 @@
  * Two transactions conflict if they share the same credentialHash, which signifies a duplicate
  * issuance attempt or parallel operations on the same credential.
  * 
- * @param {Array} transactions Array of transaction objects containing 'credentialHash'
+ * @param {Array} transactions Array of transaction objects
+ * @param {Function} keyFn Maps a tx to its conflict key (default: credentialHash)
  * @returns {Object} { groups, conflicts, metrics }
  */
-function analyzeBatch(transactions) {
+const defaultKey = (tx) => tx.credentialHash;
+
+function analyzeBatch(transactions, keyFn = defaultKey) {
   if (!transactions || !Array.isArray(transactions)) {
     throw new Error('Invalid transactions array');
   }
@@ -30,7 +33,7 @@ function analyzeBatch(transactions) {
   const txNodes = transactions.map((tx, index) => ({
     tx,
     index,
-    hash: tx.credentialHash,
+    hash: keyFn(tx),
     conflictsWith: new Set()
   }));
 
@@ -44,7 +47,7 @@ function analyzeBatch(transactions) {
   for (let i = 0; i < numTxs; i++) {
     const node = txNodes[i];
     if (!node.hash) {
-      throw new Error(`Transaction at index ${i} is missing credentialHash`);
+      throw new Error(`Transaction at index ${i} is missing conflict key`);
     }
 
     if (hashToTxIndices.has(node.hash)) {
@@ -52,7 +55,7 @@ function analyzeBatch(transactions) {
       for (const existingIndex of existingIndices) {
         txNodes[i].conflictsWith.add(existingIndex);
         txNodes[existingIndex].conflictsWith.add(i);
-        conflicts.push({ txA: existingIndex, txB: i, reason: 'Duplicate credentialHash', credentialHash: node.hash });
+        conflicts.push({ txA: existingIndex, txB: i, reason: keyFn === defaultKey ? 'Duplicate credentialHash' : 'Same student and program', key: node.hash });
         conflictsDetected++;
       }
       existingIndices.push(i);
