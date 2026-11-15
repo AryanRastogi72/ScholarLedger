@@ -46,6 +46,12 @@ async function main() {
     fs.copyFileSync(managerArtifact, path.join(frontendDir, "CredentialManager.json"));
   }
 
+  if ((await hre.ethers.provider.getNetwork()).chainId === 31337n) {
+    const issuer = (await hre.ethers.getSigners())[1];
+    await (await registry.registerInstitution(issuer.address, "Demo University", "demo.edu")).wait();
+    console.log(`Registered Demo University issuer: ${issuer.address}`);
+  }
+
   console.log("Deployment and ABI extraction complete!");
 }
 

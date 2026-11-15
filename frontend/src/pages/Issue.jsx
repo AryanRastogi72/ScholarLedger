@@ -11,7 +11,7 @@ function Issue() {
     e.preventDefault();
     setStatus('Processing...');
     try {
-      const dataToHash = form.studentId + form.programName + form.metadata;
+      const dataToHash = `${form.studentId}|${form.programName}|${form.metadata}`;
       const credentialHash = await sha256(dataToHash);
       setHashResult(credentialHash);
 

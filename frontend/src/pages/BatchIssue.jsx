@@ -1,16 +1,15 @@
-import React, { useState, useContext } from 'react';
-import { WalletContext } from '../App';
+import React, { useState } from 'react';
 import { deployedAddresses } from '../utils/contracts';
 
 const BATCH_API = 'http://localhost:3001/api/batch';
 
 function BatchIssue() {
-  const { account } = useContext(WalletContext);
   const [rows, setRows] = useState([{ studentId: '', programName: '', metadata: '' }]);
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState('');
   const [metrics, setMetrics] = useState(null);
   const [results, setResults] = useState(null);
+  const [merkleRoot, setMerkleRoot] = useState(null);
 
   const addRow = () => setRows([...rows, { studentId: '', programName: '', metadata: '' }]);
 
@@ -43,14 +42,10 @@ function BatchIssue() {
   };
 
   const buildPayload = () => {
-    if (!account) throw new Error('Connect MetaMask first');
     const validRows = rows.filter(r => r.studentId && r.programName);
     if (validRows.length === 0) throw new Error('Add at least one valid row');
     return {
       transactions: validRows,
-      // Use Hardhat Account #0 private key for local dev
-      issuerPrivateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
-      registryAddress: deployedAddresses.InstitutionRegistry,
       managerAddress: deployedAddresses.CredentialManager
     };
   };
@@ -67,8 +62,8 @@ function BatchIssue() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Analysis failed');
-      setMetrics(data.metrics || data);
-      setStatus(`Analysis complete: ${data.conflicts?.length || 0} conflict(s) found, ${data.groups?.length || 0} parallel group(s).`);
+      setMetrics(data.metrics ? { totalTxs: data.metrics.total_txs, parallelBatches: data.metrics.parallel_batches, conflictsDetected: data.metrics.conflicts_detected } : null);
+      setStatus(`Analysis complete: ${data.conflicts.length} conflict(s) found, ${data.groups.length} parallel group(s).`);
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     }
@@ -79,6 +74,7 @@ function BatchIssue() {
       setStatus('Executing batch — submitting to blockchain...');
       setMetrics(null);
       setResults(null);
+      setMerkleRoot(null);
       const payload = buildPayload();
       const res = await fetch(`${BATCH_API}/issue`, {
         method: 'POST',
@@ -88,8 +84,9 @@ function BatchIssue() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Execution failed');
       setMetrics(data.metrics);
-      setResults(data.results);
-      setStatus(`Batch complete! ${data.metrics?.totalTxs || 0} credentials issued.`);
+      setResults(data.results.flat().map(r => ({ studentId: r.tx.studentId, programName: r.tx.programName, success: r.success, txHash: r.result, error: r.error })));
+      setMerkleRoot(data.merkleRoot);
+      setStatus(`Batch complete: ${data.metrics.succeeded} succeeded, ${data.metrics.failed} failed.`);
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     }
@@ -157,14 +154,26 @@ function BatchIssue() {
             <div className="stat-value">{metrics.conflictsDetected || 0}</div>
             <div className="stat-label">Conflicts Detected</div>
           </div>
+          {metrics.succeeded !== undefined && (
+            <>
+              <div className="card stat-card"><div className="stat-value">{metrics.succeeded}</div><div className="stat-label">Succeeded</div></div>
+              <div className="card stat-card"><div className="stat-value">{metrics.failed}</div><div className="stat-label">Failed</div></div>
+            </>
+          )}
           <div className="card stat-card">
             <div className="stat-value">{metrics.totalTimeMs ? `${metrics.totalTimeMs}ms` : '—'}</div>
             <div className="stat-label">Total Time</div>
           </div>
           <div className="card stat-card">
-            <div className="stat-value">{metrics.throughputTxPerSec ? `${metrics.throughputTxPerSec}` : '—'}</div>
+            <div className="stat-value">{metrics.throughputTxPerSec ? metrics.throughputTxPerSec.toFixed(1) : '—'}</div>
             <div className="stat-label">Throughput (tx/sec)</div>
           </div>
+        </div>
+      )}
+
+      {merkleRoot && (
+        <div className="result-box" style={{ marginTop: '24px' }}>
+          <p>Merkle root: <code>{merkleRoot}</code></p>
         </div>
       )}
 

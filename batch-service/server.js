@@ -14,37 +14,41 @@ const PORT = 3001;
 app.use(cors());
 app.use(express.json());
 
-// Gracefully load ABIs
 const abisPath = path.join(__dirname, '../frontend/src/abis');
-let registryAbi = null;
-let managerAbi = null;
+const RPC_URL = process.env.RPC_URL ?? 'http://127.0.0.1:8545';
+// Hardhat account #1 (local dev only)
+const HARDHAT_ACCOUNT_1_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
-function loadAbis() {
-  try {
-    const registryPath = path.join(abisPath, 'Registry.json');
-    const managerPath = path.join(abisPath, 'Manager.json');
-    
-    if (fs.existsSync(registryPath)) {
-      const parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-      registryAbi = parsed.abi || parsed;
-    }
-    if (fs.existsSync(managerPath)) {
-      const parsed = JSON.parse(fs.readFileSync(managerPath, 'utf8'));
-      managerAbi = parsed.abi || parsed;
-    }
-  } catch (e) {
-    console.warn("Could not load ABIs. They may not be deployed yet.", e.message);
-  }
+// Re-read on each request so a deploy after server start is picked up
+function loadDeployment() {
+  const read = (f) => {
+    const p = path.join(abisPath, f);
+    if (!fs.existsSync(p)) throw new Error('Contracts not found: deploy contracts first (npx hardhat run scripts/deploy.js --network localhost)');
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  };
+  return {
+    managerAbi: read('CredentialManager.json').abi,
+    addresses: read('deployedAddresses.json')
+  };
 }
 
-// Load once at startup
-loadAbis();
-
+// Canonical hash: 0x + SHA-256 of "studentId|programName|metadata"
 function computeHash(tx) {
-  // SHA-256(studentId + programName + metadata + timestamp)
-  const data = `${tx.studentId || ''}${tx.programName || ''}${tx.metadata || ''}${tx.timestamp || ''}`;
-  return sha256(data);
+  return '0x' + sha256(`${tx.studentId ?? ''}|${tx.programName ?? ''}|${tx.metadata ?? ''}`);
 }
+
+function validateRows(transactions) {
+  if (!transactions || !Array.isArray(transactions)) return 'transactions must be an array';
+  for (let i = 0; i < transactions.length; i++) {
+    const t = transactions[i];
+    if (!t || !String(t.studentId ?? '').trim() || !String(t.programName ?? '').trim()) {
+      return `Row ${i + 1}: studentId and programName are required`;
+    }
+  }
+  return null;
+}
+
+const withHash = (transactions) => transactions.map(tx => ({ ...tx, credentialHash: computeHash(tx) }));
 
 // Routes
 app.get('/api/health', (req, res) => {
@@ -53,18 +57,10 @@ app.get('/api/health', (req, res) => {
 
 app.post('/api/batch/analyze', (req, res, next) => {
   try {
-    const { transactions } = req.body;
-    if (!transactions || !Array.isArray(transactions)) {
-      return res.status(400).json({ error: 'transactions must be an array' });
-    }
-
-    const txsWithHash = transactions.map(tx => ({
-      ...tx,
-      credentialHash: computeHash(tx)
-    }));
-
-    const analysis = analyzeBatch(txsWithHash);
-    res.json({ success: true, analysis });
+    const err = validateRows(req.body.transactions);
+    if (err) return res.status(400).json({ error: err });
+    const analysis = analyzeBatch(withHash(req.body.transactions));
+    res.json({ success: true, ...analysis });
   } catch (error) {
     next(error);
   }
@@ -72,71 +68,59 @@ app.post('/api/batch/analyze', (req, res, next) => {
 
 app.post('/api/batch/issue', async (req, res, next) => {
   try {
-    const { transactions, issuerPrivateKey, registryAddress, managerAddress } = req.body;
-    
-    if (!transactions || !Array.isArray(transactions)) {
-      return res.status(400).json({ error: 'transactions must be an array' });
-    }
-    if (!issuerPrivateKey || !registryAddress) {
-      return res.status(400).json({ error: 'issuerPrivateKey and registryAddress are required' });
+    const { transactions, managerAddress } = req.body;
+    const err = validateRows(transactions);
+    if (err) return res.status(400).json({ error: err });
+
+    let deployment;
+    try {
+      deployment = loadDeployment();
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
     }
 
-    // Try to load ABIs again just in case they were deployed after server started
-    if (!registryAbi) {
-      loadAbis();
-    }
-    
-    if (!registryAbi) {
-      return res.status(500).json({ error: 'Contract ABIs not found in ../frontend/src/abis/. Please deploy smart contracts first.' });
-    }
-
-    // 1. Compute credentialHash for each transaction
-    const txsWithHash = transactions.map(tx => ({
-      ...tx,
-      credentialHash: computeHash(tx)
-    }));
-
-    // 2. Run OCC analysis to group non-conflicting transactions
+    const txsWithHash = withHash(transactions);
     const analysis = analyzeBatch(txsWithHash);
-    
-    // 3. Executor function
-    const provider = new ethers.JsonRpcProvider('http://127.0.0.1:8545');
-    const wallet = new ethers.Wallet(issuerPrivateKey, provider);
-    const registryContract = new ethers.Contract(registryAddress, registryAbi, wallet);
 
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const wallet = new ethers.Wallet(process.env.ISSUER_PRIVATE_KEY ?? HARDHAT_ACCOUNT_1_KEY, provider);
+    const manager = new ethers.Contract(managerAddress || deployment.addresses.CredentialManager, deployment.managerAbi, wallet);
+
+    // Service assigns nonces itself so parallel sends never collide
+    let nextNonce = await provider.getTransactionCount(wallet.address, 'pending');
+
+    // Dev nodes with automine reject out-of-order nonces, so submissions go out in nonce
+    // order (queue below) while confirmations are awaited in parallel.
+    let sendQueue = Promise.resolve();
     const executorFn = async (tx) => {
-      // Execute transaction logic. Assumes `issueCredential` exists in the ABI.
-      // If the actual method name differs, this will throw, which is caught by executeBatch.
-      if (typeof registryContract.issueCredential !== 'function') {
-        throw new Error('issueCredential method not found on contract');
+      const nonce = nextNonce++; // taken synchronously, before any await
+      const sending = sendQueue.then(() => manager.issueCredential(tx.credentialHash, tx.studentId, tx.programName, { nonce, gasLimit: 500_000 }));
+      sendQueue = sending.catch(() => {});
+      try {
+        const sent = await sending;
+        const receipt = await sent.wait(); // throws on revert
+        return receipt.hash;
+      } catch (e) {
+        const m = /reason string '([^']+)'/.exec(e.message);
+        throw new Error(m ? m[1] : e.reason ?? e.shortMessage ?? e.message);
       }
-      
-      // We assume issueCredential takes the credential hash
-      const contractTx = await registryContract.issueCredential("0x" + tx.credentialHash);
-      const receipt = await contractTx.wait();
-      return receipt.hash;
     };
 
-    // Execute grouped batches concurrently
     const execResults = await executeBatch(analysis.groups, executorFn);
 
-    // 4. Compute Merkle root of all credential hashes
-    const hashes = txsWithHash.map(tx => tx.credentialHash);
-    const tree = buildMerkleTree(hashes);
-    const root = tree.root;
+    const flat = execResults.results.flat();
+    const ok = flat.filter(r => r.success);
+    const succeeded = ok.length;
+    const failed = flat.length - succeeded;
 
-    // 5. Store Merkle root on-chain via storeMerkleRoot()
-    if (root) {
-      if (typeof registryContract.storeMerkleRoot === 'function') {
-        const rootStr = "0x" + root;
-        const rootTx = await registryContract.storeMerkleRoot(rootStr);
-        await rootTx.wait();
-      } else {
-        console.warn("storeMerkleRoot method not found on contract");
-      }
+    let root = null;
+    if (succeeded > 0) {
+      const tree = buildMerkleTree(ok.map(r => r.tx.credentialHash.slice(2)));
+      root = '0x' + tree.root;
+      const rootTx = await manager.storeMerkleRoot(root, succeeded, { nonce: nextNonce++, gasLimit: 200_000 });
+      await rootTx.wait();
     }
 
-    // 6. Return response
     return res.json({
       success: true,
       results: execResults.results,
@@ -145,11 +129,12 @@ app.post('/api/batch/issue', async (req, res, next) => {
         totalTxs: analysis.metrics.total_txs,
         parallelBatches: analysis.metrics.parallel_batches,
         conflictsDetected: analysis.metrics.conflicts_detected,
+        succeeded,
+        failed,
         totalTimeMs: execResults.metrics.totalTimeMs,
         throughputTxPerSec: execResults.metrics.throughputTxPerSec
       }
     });
-
   } catch (error) {
     next(error);
   }

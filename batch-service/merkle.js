@@ -8,35 +8,30 @@ function sha256(data) {
 function buildMerkleTree(leaves) {
   // leaves: array of hex strings (credential hashes)
   // Returns: { root, tree, proofs }
-  if (!leaves || leaves.length === 0) return { root: null, tree: [], proofs: {} };
+  if (!leaves || leaves.length === 0) return { root: null, tree: [], proofs: [] };
   
-  // Ensure even number of leaves by duplicating the last one if odd
-  const paddedLeaves = [...leaves];
-  if (paddedLeaves.length % 2 !== 0) {
-    paddedLeaves.push(paddedLeaves[paddedLeaves.length - 1]);
-  }
-  
-  const tree = [paddedLeaves];
-  let currentLevel = paddedLeaves;
-  
+  const tree = [[...leaves]];
+  let currentLevel = tree[0];
+
   while (currentLevel.length > 1) {
+    // Pad every odd level by duplicating its last node
+    if (currentLevel.length % 2 !== 0) {
+      currentLevel = [...currentLevel, currentLevel[currentLevel.length - 1]];
+      tree[tree.length - 1] = currentLevel;
+    }
     const nextLevel = [];
     for (let i = 0; i < currentLevel.length; i += 2) {
-      const combined = currentLevel[i] + currentLevel[i + 1];
-      nextLevel.push(sha256(combined));
+      nextLevel.push(sha256(currentLevel[i] + currentLevel[i + 1]));
     }
     tree.push(nextLevel);
     currentLevel = nextLevel;
   }
-  
+
   const root = currentLevel[0];
-  
-  // Build proofs for each original leaf
-  const proofs = {};
-  for (let i = 0; i < leaves.length; i++) {
-    proofs[leaves[i]] = getMerkleProof(tree, i);
-  }
-  
+
+  // proofs[i] is the proof for leaves[i] (keyed by index; leaf values can repeat)
+  const proofs = leaves.map((_, i) => getMerkleProof(tree, i));
+
   return { root, tree, proofs };
 }
 
@@ -75,4 +70,4 @@ function verifyMerkleProof(leaf, proof, root) {
   return hash === root;
 }
 
-module.exports = { sha256, buildMerkleTree, verifyMerkleProof };
+module.exports = { sha256, buildMerkleTree, getMerkleProof, verifyMerkleProof };
