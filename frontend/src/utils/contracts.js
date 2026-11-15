@@ -8,6 +8,10 @@ export function getProvider() {
   return new ethers.BrowserProvider(window.ethereum);
 }
 
+export function getReadProvider() {
+  return new ethers.JsonRpcProvider(import.meta.env.VITE_RPC_URL ?? 'http://127.0.0.1:8545');
+}
+
 export async function getSigner() {
   const provider = getProvider();
   return provider.getSigner();

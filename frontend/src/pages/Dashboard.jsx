@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { getProvider, getRegistryContract, getCredentialManagerContract } from '../utils/contracts';
+import { getReadProvider, getRegistryContract, getCredentialManagerContract } from '../utils/contracts';
 
 function Dashboard() {
   const [stats, setStats] = useState({ totalInstitutions: 0, totalCredentials: 0 });
   const [events, setEvents] = useState([]);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     async function loadStats() {
       try {
-        const provider = getProvider();
+        const provider = getReadProvider();
         const registry = await getRegistryContract(provider);
         const manager = await getCredentialManagerContract(provider);
 
@@ -22,7 +23,7 @@ function Dashboard() {
 
         setEvents(credEvents.slice(-5).reverse());
       } catch (err) {
-        console.error(err);
+        setError(`Could not load chain data: ${err.shortMessage || err.message} (is the node running?)`);
       }
     }
     loadStats();
@@ -32,6 +33,7 @@ function Dashboard() {
     <div className="card">
       <h1>ScholarLedger Dashboard</h1>
       <p>A blockchain-based academic credential verification DApp.</p>
+      {error && <p style={{ color: 'var(--error-color)' }}>{error}</p>}
       
       <div style={{ display: 'flex', gap: '20px', marginTop: '30px' }}>
         <div className="card" style={{ flex: 1, backgroundColor: 'var(--bg-color)' }}>
@@ -49,7 +51,7 @@ function Dashboard() {
         {events.length === 0 ? <p>No recent activity.</p> : (
           <ul>
             {events.map((e, idx) => (
-              <li key={idx}>Credential Issued by {e.args[1]} for {e.args[2]}</li>
+              <li key={idx}>Credential Issued by {e.args.issuer} for {e.args.studentId}</li>
             ))}
           </ul>
         )}

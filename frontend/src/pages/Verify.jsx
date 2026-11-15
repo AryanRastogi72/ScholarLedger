@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getProvider, getCredentialManagerContract, getRegistryContract } from '../utils/contracts';
+import { getReadProvider, getCredentialManagerContract, getRegistryContract } from '../utils/contracts';
 import StatusBadge from '../components/StatusBadge';
 
 function Verify() {
@@ -9,31 +9,29 @@ function Verify() {
 
   const handleVerify = async (e) => {
     e.preventDefault();
-    setStatus('Verifying...');
     setResult(null);
+    const h = hash.trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(h)) {
+      setStatus('Error: enter 0x followed by 64 hex characters');
+      return;
+    }
+    setStatus('Verifying...');
     try {
-      const provider = getProvider();
+      const provider = getReadProvider();
       const manager = await getCredentialManagerContract(provider);
       const registry = await getRegistryContract(provider);
-      
-      const cred = await manager.getCredential(hash);
-      if (cred.timestamp === 0n) {
-        setResult({ status: 'invalid', message: 'Credential not found' });
-      } else if (cred.isRevoked) {
-        setResult({ status: 'revoked', issuer: cred.issuer, timestamp: Number(cred.timestamp) });
+
+      const [isValid, issuer, issuedAt, isRevoked] = await manager.verifyCredential(h);
+      if (issuedAt === 0n) {
+        setResult({ status: 'NOT FOUND' });
       } else {
-        const institution = await registry.institutions(cred.issuer);
-        setResult({ 
-          status: 'valid', 
-          issuer: cred.issuer, 
-          institutionName: institution.name,
-          timestamp: Number(cred.timestamp)
-        });
+        const institution = await registry.institutions(issuer);
+        const state = isRevoked ? 'REVOKED' : isValid ? 'VALID' : 'ISSUER DEREGISTERED';
+        setResult({ status: state, issuer, institutionName: institution.name, timestamp: Number(issuedAt) });
       }
       setStatus('');
     } catch (err) {
-      console.error(err);
-      setStatus(`Error: ${err.reason || err.message}`);
+      setStatus(`Error: ${err.reason || err.shortMessage || err.message} (is the node running?)`);
     }
   };
 
@@ -48,7 +46,6 @@ function Verify() {
       {result && (
         <div style={{ marginTop: '20px', padding: '15px', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
           <h3>Result: <StatusBadge status={result.status} /></h3>
-          {result.message && <p>{result.message}</p>}
           {result.issuer && <p><strong>Issuer Address:</strong> {result.issuer}</p>}
           {result.institutionName && <p><strong>Institution Name:</strong> {result.institutionName}</p>}
           {result.timestamp && <p><strong>Issued At:</strong> {new Date(result.timestamp * 1000).toLocaleString()}</p>}
