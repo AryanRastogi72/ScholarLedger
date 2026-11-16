@@ -84,7 +84,7 @@ app.post('/api/batch/issue', async (req, res, next) => {
       return res.status(500).json({ error: e.message });
     }
 
-    const rows = withCommitment(transactions);
+    const rows = withCommitment(transactions).map((r, idx) => ({ ...r, idx }));
     const analysis = analyzeBatch(rows, conflictKey);
 
     const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -98,13 +98,14 @@ app.post('/api/batch/issue', async (req, res, next) => {
     // order (queue below) while confirmations are awaited in parallel.
     let sendQueue = Promise.resolve();
     const committedKeys = new Set(); // OCC validation: keys already committed in this request
-    const executorFn = async (tx) => {
+    const executorFn = async (tx, mark) => {
       if (committedKeys.has(conflictKey(tx))) throw new Error('Duplicate of an earlier row in this batch');
       const nonce = nextNonce++; // taken synchronously, before any await
       const sending = sendQueue.then(() => manager.issueCredential(tx.commitment, { nonce, gasLimit: 500_000 }));
       sendQueue = sending.catch(() => {});
       try {
         const sent = await sending;
+        mark();
         const receipt = await sent.wait(); // throws on revert
         committedKeys.add(conflictKey(tx));
         return receipt.hash;
@@ -151,12 +152,13 @@ app.post('/api/batch/issue', async (req, res, next) => {
     }
 
     // Do not return salts in the per-row results; they travel only inside `credentials`
-    const results = execResults.results.map(g => g.map(({ tx, ...rest }) => ({ ...rest, tx: { studentId: tx.studentId, programName: tx.programName, commitment: tx.commitment } })));
+    const results = execResults.results.map(g => g.map(({ tx, ...rest }) => ({ ...rest, tx: { idx: tx.idx, studentId: tx.studentId, programName: tx.programName, commitment: tx.commitment } })));
 
     return res.json({
       success: true,
       results,
       merkleRoot: root,
+      conflicts: analysis.conflicts.map(({ txA, txB, key }) => ({ txA, txB, key })),
       batchId,
       credentials,
       metrics: {

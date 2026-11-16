@@ -4,7 +4,7 @@ import { downloadJson } from '../utils/credential';
 import { useReveal } from '../utils/useReveal';
 import PageHeader from '../components/PageHeader';
 import FileDrop from '../components/FileDrop';
-import HashText from '../components/HashText';
+import BatchTimeline from '../components/BatchTimeline';
 
 const BATCH_API = import.meta.env.VITE_BATCH_API ?? 'http://localhost:3001/api/batch';
 const blank = () => ({ studentId: '', programName: '', metadata: '' });
@@ -142,11 +142,11 @@ function BatchIssue() {
           <dl className="stats">
             <div><dt>Succeeded</dt><dd>{run.metrics.succeeded}</dd></div>
             <div><dt>Failed</dt><dd>{run.metrics.failed}</dd></div>
-            <div><dt>Total time</dt><dd>{(run.metrics.totalTimeMs / 1000).toFixed(2)} s</dd></div>
-            <div><dt>Throughput</dt><dd>{run.metrics.throughputTxPerSec.toFixed(1)} tx/s</dd></div>
             <div><dt>Batch id</dt><dd>{run.batchId ?? '–'}</dd></div>
           </dl>
-          {run.merkleRoot && <p className="mt">Merkle root: <HashText value={run.merkleRoot} /></p>}
+          <h3>Timeline</h3>
+          <p className="hint">One lane per group. Each bar runs from the moment a row was submitted to the moment it was confirmed, measured by the service.</p>
+          <BatchTimeline results={run.results} conflicts={run.conflicts ?? []} metrics={run.metrics} merkleRoot={run.merkleRoot} />
           {run.credentials.length > 0 && (
             <>
               <button type="button" onClick={() => downloadJson(`scholarledger-batch-${run.batchId}.json`, run.credentials)}>Download all credential files</button>

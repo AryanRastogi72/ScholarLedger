@@ -1,17 +1,42 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { ethers } from 'ethers';
+import { CircleNotch, CheckCircle, XCircle } from '@phosphor-icons/react';
 import { getSigner, getReadProvider, getRegistryContract, getCredentialManagerContract } from '../utils/contracts';
 import { WalletContext } from '../utils/wallet';
 import { useTx } from '../utils/useTx';
 import PageHeader from '../components/PageHeader';
-import TxStatus from '../components/TxStatus';
+import CertificateCard from '../components/CertificateCard';
 import HashText from '../components/HashText';
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const STEP_MS = 350; // pacing only; the right-hand outcome waits for the real transaction
+
+const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function Steps({ step, outcome }) {
+  return (
+    <ol className="seq" aria-live="polite">
+      <li className={step >= 1 ? 'on' : ''}><span className="seq-n">1</span> Forged credential</li>
+      <li className={step >= 2 ? 'on' : ''}><span className="seq-n">2</span> Sending to chain {step === 2 && <CircleNotch size={16} className="spin" aria-hidden="true" />}</li>
+      <li className={step >= 3 ? 'on' : ''}><span className="seq-n">3</span> Outcome {step >= 3 && outcome}</li>
+    </ol>
+  );
+}
 
 function ForgeryDemo() {
   const { account } = useContext(WalletContext);
   const [registered, setRegistered] = useState(null);
-  const [fake, setFake] = useState([]);
+  const [left, setLeft] = useState(0);
+  const [right, setRight] = useState(0);
   const { tx, run } = useTx();
+
+  // One forged commitment shared by both sides ("same forged hash")
+  const forged = useMemo(() => ethers.hexlify(ethers.randomBytes(32)), []);
+  const fakeIssuer = useMemo(() => ethers.Wallet.createRandom().address, []);
+  const card = {
+    institution: 'Prestige University', issuer: account ?? fakeIssuer, studentId: 'S0000', programName: 'Ph.D. in Anything',
+    metadata: 'Never issued', commitment: forged, issuedAt: Math.floor(Date.now() / 1000)
+  };
 
   useEffect(() => {
     if (!account) { setRegistered(null); return; }
@@ -24,52 +49,60 @@ function ForgeryDemo() {
     })();
   }, [account]);
 
-  // Simulation: a hash-only system has no issuer check, so any wallet can anchor any hash.
-  const simulate = () => {
-    const wallet = ethers.Wallet.createRandom().address;
-    const hash = ethers.hexlify(ethers.randomBytes(32));
-    setFake((f) => [{ hash, wallet }, ...f]);
+  const startLeft = async () => {
+    const wait = reduced() ? 0 : STEP_MS;
+    setLeft(1); await sleep(wait); setLeft(2); await sleep(wait); setLeft(3);
   };
 
-  const tryForgery = () => run(async () => {
-    const manager = await getCredentialManagerContract(await getSigner());
-    return manager.issueCredential(ethers.hexlify(ethers.randomBytes(32)));
-  });
+  const startRight = async () => {
+    const wait = reduced() ? 0 : STEP_MS;
+    setRight(1); await sleep(wait); setRight(2);
+    await run(async () => (await getCredentialManagerContract(await getSigner())).issueCredential(forged));
+    await sleep(wait); setRight(3);
+  };
+
+  const accepted = tx.phase === 'confirmed';
 
   return (
     <div className="fade-in">
       <PageHeader title="Forgery demo">
-        The Block.co attack, side by side. The same forged commitment, once against a hash-only system and once against ScholarLedger.
+        The Block.co attack, side by side. The same forged hash goes to a hash-only system and to ScholarLedger.
       </PageHeader>
-      <div className="split">
-        <section className="panel stack" aria-labelledby="legacy">
+      <p className="mono muted">Forged hash: <HashText value={forged} /></p>
+
+      <div className="demo-grid">
+        <section className="demo-col" aria-labelledby="legacy">
           <h2 id="legacy">Hash-only system <span className="badge neutral">Simulated</span></h2>
-          <p>Anchoring a hash needs no proof of who you are. Any wallet can publish a hash for a degree it never issued, and a later check will say the hash exists.</p>
-          <button type="button" className="secondary" onClick={simulate}>Anchor a forged hash from a random wallet</button>
-          <ul className="stack" aria-live="polite">
-            {fake.map((f) => (
-              <li key={f.hash}>
-                <span className="badge valid">Accepted</span> <HashText value={f.hash} /> from <code title={f.wallet}>{f.wallet.slice(0, 8)}</code>
-              </li>
-            ))}
-          </ul>
+          <p>Anchoring a hash needs no proof of who you are. Any wallet can publish a hash for a degree it never issued.</p>
+          <button type="button" className="secondary" onClick={startLeft} disabled={left > 0 && left < 3}>
+            {left === 3 ? 'Run again' : 'Anchor the forged hash'}
+          </button>
+          <Steps step={left} outcome={
+            <div className="outcome ok"><CheckCircle size={22} weight="fill" aria-hidden="true" /> <span><strong>Accepted. Verifier says valid.</strong> The forgery now looks genuine.</span></div>
+          } />
+          {left >= 1 && (
+            <div className="demo-card fade-in"><CertificateCard {...card} status={left === 3 ? 'VALID' : undefined} /></div>
+          )}
         </section>
 
-        <section className="panel stack" aria-labelledby="real">
+        <div className="demo-divider" aria-hidden="true"><span>same forged hash</span></div>
+
+        <section className="demo-col" aria-labelledby="real">
           <h2 id="real">ScholarLedger <span className="badge neutral">Real transaction</span></h2>
-          <ol>
-            <li>Switch MetaMask to an account that is not a registered institution.</li>
-            <li>Press the button below.</li>
-            <li>The contract rejects the transaction.</li>
-          </ol>
-          {registered === true && (
-            <p className="tx-status" role="status">The connected wallet is a registered institution, so this would succeed. Switch to an unregistered account first.</p>
-          )}
+          <p>Switch MetaMask to an account that is not a registered institution, then send the same hash. This is a real transaction to your local node.</p>
+          {registered === true && <p className="tx-status" role="status"><span>The connected wallet is a registered institution, so this would succeed. Switch to an unregistered account first.</span></p>}
           {!account && <p className="muted">Connect a wallet from the top bar to try it.</p>}
-          <button type="button" onClick={tryForgery} disabled={!account || registered === true || tx.phase === 'wallet' || tx.phase === 'submitted'}>
-            Try forgery
+          <button type="button" onClick={startRight} disabled={!account || registered === true || (right > 0 && right < 3)}>
+            {right === 3 ? 'Run again' : 'Try the forgery'}
           </button>
-          <TxStatus tx={tx} />
+          <Steps step={right} outcome={accepted ? (
+            <div className="outcome ok"><CheckCircle size={22} weight="fill" aria-hidden="true" /> <span><strong>Accepted.</strong> This wallet is a registered institution.</span></div>
+          ) : (
+            <div className="outcome bad"><XCircle size={22} weight="fill" aria-hidden="true" /> <span><strong>Rejected by the contract.</strong> {tx.message}</span></div>
+          )} />
+          {right >= 1 && (
+            <div className="demo-card fade-in"><CertificateCard {...card} status={right === 3 ? (accepted ? 'VALID' : 'REJECTED') : undefined} /></div>
+          )}
         </section>
       </div>
     </div>

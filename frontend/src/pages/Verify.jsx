@@ -8,6 +8,7 @@ import { useReveal } from '../utils/useReveal';
 import PageHeader from '../components/PageHeader';
 import FileDrop from '../components/FileDrop';
 import StatusPanel from '../components/StatusPanel';
+import CertificateCard from '../components/CertificateCard';
 import HashText from '../components/HashText';
 
 function Verify() {
@@ -69,12 +70,13 @@ function Verify() {
   const onFile = async (f) => {
     setResult(null);
     setError('');
+    const text = await f.text();
     try {
-      const cred = await parseCredentialFile(await f.text());
+      const cred = await parseCredentialFile(text);
       await lookup(cred.commitment, cred);
     } catch (err) {
       // Altered or malformed files never reach the chain.
-      if (/altered/.test(err.message)) setResult({ kind: 'ALTERED' });
+      if (/altered/.test(err.message)) setResult({ kind: 'ALTERED', claimed: JSON.parse(text) });
       else setError(err.message);
     }
   };
@@ -114,15 +116,8 @@ function Verify() {
             <StatusPanel kind={result.kind}>
               {result.institution && (
                 <dl className="facts">
-                  <dt>Issuer</dt><dd>{result.institution}</dd>
                   <dt>Issuer address</dt><dd><HashText value={result.issuer} /></dd>
-                  <dt>Issued</dt><dd>{new Date(result.issuedAt * 1000).toLocaleString()}</dd>
                   <dt>Commitment</dt><dd><HashText value={result.commitment} /></dd>
-                  {result.fields && <>
-                    <dt>Student ID</dt><dd>{result.fields.studentId}</dd>
-                    <dt>Program</dt><dd>{result.fields.programName}</dd>
-                    {result.fields.metadata && <><dt>Details</dt><dd>{result.fields.metadata}</dd></>}
-                  </>}
                   {result.batchOk !== undefined && <>
                     <dt>Batch proof</dt>
                     <dd>{result.batchOk ? 'Checks out against the stored Merkle root.' : 'Warning: the batch proof does not check out.'}</dd>
@@ -131,6 +126,22 @@ function Verify() {
               )}
               {result.institution && <p className="mt"><Link to="/explorer">See it on the ledger</Link></p>}
             </StatusPanel>
+          )}
+          {result && result.institution && (
+            <div className="cert-wrap">
+              <CertificateCard
+                institution={result.institution} issuer={result.issuer} issuedAt={result.issuedAt} commitment={result.commitment}
+                status={result.kind} studentId={result.fields?.studentId} programName={result.fields?.programName} metadata={result.fields?.metadata}
+              />
+            </div>
+          )}
+          {result && result.kind === 'ALTERED' && (
+            <div className="cert-wrap">
+              <CertificateCard
+                institution={result.claimed.institution ?? 'Claimed institution'} commitment={result.claimed.commitment}
+                status="ALTERED" claimed studentId={result.claimed.studentId} programName={result.claimed.programName} metadata={result.claimed.metadata}
+              />
+            </div>
           )}
         </div>
       </div>

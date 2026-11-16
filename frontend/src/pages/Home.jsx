@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight } from '@phosphor-icons/react';
 import { getReadProvider, getRegistryContract, getCredentialManagerContract } from '../utils/contracts';
+import CertificateCard from '../components/CertificateCard';
+import { IdentityDiagram, OccDiagram } from '../components/Diagrams';
 
 function useChainStats() {
   const [stats, setStats] = useState(null);
@@ -34,6 +36,17 @@ const PAPERS = [
   'Fernandez-Blanco et al. A Blockchain Based System for Preventing Academic Forgery: Design and Practical Evaluation for CPU-Based and Low-Power Computers (IEEE BCCA 2024). Template for the evaluation.'
 ];
 
+const SPECIMEN = {
+  institution: 'Demo University',
+  issuer: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+  studentId: 'S1001',
+  programName: 'B.Tech Computer Science',
+  metadata: 'Class of 2026',
+  commitment: '0x2225df7e8e27bd1a06ead6224e43eecc4f02d8507b5a5f71aa31b7e695e22372',
+  issuedAt: 1794700000,
+  status: 'VALID'
+};
+
 function Home() {
   const { stats, offline } = useChainStats();
   const cells = [
@@ -45,16 +58,22 @@ function Home() {
 
   return (
     <div className="fade-in">
-      <section className="hero">
-        <h1>Academic credentials you can check, and nobody can forge.</h1>
-        <p className="lede">
-          Systems like Block.co anchor a document hash on a blockchain. That proves the document was not changed, but not
-          who published it. Anyone with a wallet can anchor a forged degree and the check still says valid. ScholarLedger
-          makes the chain itself refuse hashes from anyone who is not a registered institution.
-        </p>
-        <Link to="/verify" className="nav-link primary cta">
-          Verify a credential <ArrowRight size={18} aria-hidden="true" />
-        </Link>
+      <section className="hero-split">
+        <div className="hero">
+          <h1>Academic credentials you can check, and nobody can forge.</h1>
+          <p className="lede">
+            Systems like Block.co anchor a document hash on a blockchain. That proves the document was not changed, but not
+            who published it. Anyone with a wallet can anchor a forged degree and the check still says valid. ScholarLedger
+            makes the chain itself refuse hashes from anyone who is not a registered institution.
+          </p>
+          <Link to="/verify" className="nav-link primary cta">
+            Verify a credential <ArrowRight size={18} aria-hidden="true" />
+          </Link>
+        </div>
+        <div className="hero-specimen">
+          <CertificateCard {...SPECIMEN} specimen />
+          <p className="specimen-label">Specimen. Sample data, not a real credential.</p>
+        </div>
       </section>
 
       <section aria-labelledby="live">
@@ -64,9 +83,9 @@ function Home() {
             <span>Node offline. Start the local chain with <code>npx hardhat node</code> and deploy the contracts to see live numbers.</span>
           </p>
         ) : (
-          <dl className="stats">
+          <dl className="stats stats-big">
             {cells.map(([label, value]) => (
-              <div key={label}><dt>{label}</dt><dd>{value ?? '–'}</dd></div>
+              <div key={label}><dd>{value ?? '–'}</dd><dt>{label}</dt></div>
             ))}
           </dl>
         )}
@@ -74,10 +93,10 @@ function Home() {
 
       <section aria-labelledby="how">
         <h2 id="how">How it works</h2>
-        <ol className="steps">
-          <li><div><strong>Register the issuer.</strong>The admin adds a university wallet to the on-chain registry, with its name and domain.</div></li>
-          <li><div><strong>Issue a commitment.</strong>The university hashes the student details with a random salt and sends only that commitment. The student gets a credential file with the details.</div></li>
-          <li><div><strong>Verify the file.</strong>Anyone uploads the file. The page recomputes the commitment, checks it on the chain, and shows who issued it. No wallet needed.</div></li>
+        <ol className="band">
+          <li><strong>Register the issuer</strong><span>The admin adds a university wallet to the on-chain registry, with its name and domain.</span></li>
+          <li><strong>Issue a commitment</strong><span>The university hashes the student details with a random salt and sends only that commitment. The student gets a credential file.</span></li>
+          <li><strong>Verify the file</strong><span>Anyone uploads the file. The page recomputes the commitment, checks it on the chain, and shows who issued it. No wallet needed.</span></li>
         </ol>
       </section>
 
@@ -88,15 +107,13 @@ function Home() {
             The contract checks who is calling before it stores anything. A forged degree from an unknown wallet is rejected
             by the network itself, so a valid result always means a registered institution signed it.
           </p>
-          <p>Try it on the <Link to="/demo">forgery demo</Link>.</p>
+          <pre className="code" aria-label="Enforced rule">{`require(
+  registry.isRegistered(msg.sender),
+  "Issuer not registered"
+);`}</pre>
+          <p className="mt">Try it on the <Link to="/demo">forgery demo</Link>.</p>
         </div>
-        <pre className="code" aria-label="Enforced rule">{`function issueCredential(bytes32 commitment) external {
-  require(
-    registry.isRegistered(msg.sender),
-    "Issuer not registered"
-  );
-  ...
-}`}</pre>
+        <div className="diagram-wrap"><IdentityDiagram /></div>
       </section>
 
       <section className="novelty" aria-labelledby="occ">
@@ -104,14 +121,13 @@ function Home() {
           <h2 id="occ">Batch issuance with conflict detection</h2>
           <p>
             A graduation day means thousands of credentials. The batch service finds rows that clash, such as the same student
-            and program twice, places them in different groups, and submits the rows of a group back to back without waiting for each other. Conflicting rows wait for the next group and are re-checked first. Then it anchors one Merkle root for
-            everything that succeeded. This follows the optimistic concurrency idea from Block-STM.
+            and program twice, places them in different groups, and submits the rows of a group back to back without waiting
+            for each other. Conflicting rows wait for the next group and are re-checked first. Then it anchors one Merkle root
+            for everything that succeeded. This follows the optimistic concurrency idea from Block-STM.
           </p>
           <p><Link to="/batch">Open batch issue</Link></p>
         </div>
-        <ol className="pipeline" aria-label="Batch pipeline">
-          <li>Conflict graph</li><li>Groups</li><li>Back-to-back send</li><li>Merkle root</li>
-        </ol>
+        <div className="diagram-wrap"><OccDiagram /></div>
       </section>
 
       <section aria-labelledby="privacy">
@@ -119,21 +135,23 @@ function Home() {
         <div className="two-col">
           <div>
             <h3>On the chain</h3>
-            <ul>
-              <li>A salted SHA-256 commitment</li>
-              <li>The issuing wallet and the date</li>
-              <li>Whether it was revoked</li>
-              <li>Batch Merkle roots and counts</li>
-            </ul>
+            <pre className="code" aria-label="Sample on-chain record">{`commitment
+0x2225df7e8e27bd1a06ead6224e43eecc4f02d8507b5a5f71aa31b7e695e22372
+issuer     0x7099…79C8
+issuedAt   1794700000
+isRevoked  false`}</pre>
+            <p className="hint mt">Plus batch Merkle roots and counts. Nothing that names a student.</p>
           </div>
           <div>
             <h3>Held by the student</h3>
-            <ul>
-              <li>Student ID and program</li>
-              <li>Any extra details</li>
-              <li>The salt that unlocks the commitment</li>
-              <li>The Merkle proof for batch credentials</li>
-            </ul>
+            <pre className="code" aria-label="Sample credential file">{`{
+  "format": "scholarledger-credential/1",
+  "salt": "9f3c…e1",
+  "studentId": "S1001",
+  "programName": "B.Tech Computer Science",
+  "batch": { "proof": [ … ] }
+}`}</pre>
+            <p className="hint mt">The salt unlocks the commitment. Without the file, nobody can reverse it.</p>
           </div>
         </div>
       </section>

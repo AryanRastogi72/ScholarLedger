@@ -42,3 +42,23 @@ test('commitment test vector and conflict key', () => {
   assert.strictEqual(r.conflicts.length, 1);
   assert.strictEqual(r.conflicts[0].reason, 'Same student and program');
 });
+
+test('every result row has numeric submittedAt <= confirmedAt', async () => {
+  const { executeBatch } = require('../occEngine');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const groups = [[{ k: 1 }, { k: 2 }], [{ k: 3 }]];
+  const out = await executeBatch(groups, async (tx, mark) => {
+    if (tx.k === 3) throw new Error('aborted before send'); // no mark()
+    await wait(5); mark(); await wait(5);
+    return 'ok';
+  });
+  const rows = out.results.flat();
+  assert.strictEqual(rows.length, 3);
+  for (const r of rows) {
+    assert.strictEqual(typeof r.submittedAt, 'number');
+    assert.strictEqual(typeof r.confirmedAt, 'number');
+    assert.ok(r.submittedAt <= r.confirmedAt);
+  }
+  assert.ok(rows[0].submittedAt > 0 && rows[0].submittedAt < rows[0].confirmedAt);
+  assert.strictEqual(rows[2].submittedAt, rows[2].confirmedAt);
+});

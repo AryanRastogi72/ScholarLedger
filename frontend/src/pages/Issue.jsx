@@ -1,15 +1,17 @@
 import { useState } from 'react';
-import { getSigner, getCredentialManagerContract } from '../utils/contracts';
+import { getSigner, getCredentialManagerContract, getRegistryContract } from '../utils/contracts';
 import { newSalt, computeCommitment, buildCredentialFile, downloadJson } from '../utils/credential';
 import { useTx } from '../utils/useTx';
 import PageHeader from '../components/PageHeader';
 import TxStatus from '../components/TxStatus';
+import CertificateCard from '../components/CertificateCard';
 import HashText from '../components/HashText';
 
 function Issue() {
   const [form, setForm] = useState({ studentId: '', programName: '', metadata: '' });
   const [touched, setTouched] = useState(false);
   const [file, setFile] = useState(null);
+  const [cert, setCert] = useState(null);
   const { tx, run } = useTx();
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const errors = {
@@ -22,6 +24,7 @@ function Issue() {
     setTouched(true);
     if (errors.studentId || errors.programName) return;
     setFile(null);
+    setCert(null);
     const salt = newSalt();
     const commitment = await computeCommitment({ salt, ...form });
     let signer;
@@ -32,6 +35,9 @@ function Issue() {
       return manager.issueCredential(commitment);
     });
     if (done) {
+      const issuer = await signer.getAddress();
+      const institution = (await (await getRegistryContract(signer)).institutions(issuer)).name;
+      setCert({ institution, issuer, issuedAt: (await done.receipt.getBlock()).timestamp });
       const { chainId } = await signer.provider.getNetwork();
       setFile(buildCredentialFile({
         commitment, salt, ...form, issuer: await signer.getAddress(), chainId: Number(chainId),
@@ -67,6 +73,11 @@ function Issue() {
       {file && (
         <section className="panel mt fade-in" aria-labelledby="done">
           <h2 id="done">Credential issued</h2>
+          {cert && (
+            <div className="cert-wrap">
+              <CertificateCard {...cert} commitment={file.commitment} studentId={file.studentId} programName={file.programName} metadata={file.metadata} status="VALID" />
+            </div>
+          )}
           <p>Commitment on the ledger: <HashText value={file.commitment} /></p>
           <button type="button" onClick={() => downloadJson(`scholarledger-${file.studentId}.json`, file)}>Download credential file</button>
           <p className="mt">

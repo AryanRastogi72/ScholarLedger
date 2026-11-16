@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { getReadProvider, getCredentialManagerContract, getRegistryContract } from '../utils/contracts';
 import { friendlyError } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
@@ -13,6 +13,7 @@ function Explorer() {
   const [error, setError] = useState('');
   const [tab, setTab] = useState('credentials');
   const [filter, setFilter] = useState('');
+  const navigate = useNavigate();
 
   useEffect(() => {
     (async () => {
@@ -47,9 +48,16 @@ function Explorer() {
   const shownBatches = batches.filter((b) => !q || b.root.includes(q) || b.issuer.toLowerCase().includes(q));
 
   const empty = (what) => (
-    <div className="empty">
-      <p>No {what} yet.</p>
-      <p>Register an institution, then <Link to="/issue">issue a credential</Link> or <Link to="/batch">run a batch</Link>.</p>
+    <div className="ledger-end ledger-empty">
+      <p><strong>No {what} yet.</strong></p>
+      <p>Register an institution, then <Link to="/issue">issue a credential</Link> or <Link to="/batch">run a batch</Link>. Entries appear here as soon as they are confirmed.</p>
+    </div>
+  );
+  // Ruled blank lines below a short table, like the unused part of a ledger page
+  const end = (n, what) => n > 0 && (
+    <div className="ledger-end">
+      {Array.from({ length: Math.max(0, 5 - n) }, (_, i) => <div key={i} className="ghost-row" aria-hidden="true" />)}
+      <p>End of entries. {n} {what} shown.</p>
     </div>
   );
 
@@ -76,12 +84,12 @@ function Explorer() {
       <div className="table-wrap" role="tabpanel">
         {tab === 'credentials' ? (
           shownCreds.length === 0 ? (creds || error ? (error ? <p className="empty">No data to show.</p> : empty('credentials')) : <p className="empty">Loading.</p>) : (
-            <table>
+            <table className="ledger-table">
               <thead><tr><th>Commitment</th><th>Issuer</th><th>Date</th><th>Status</th></tr></thead>
               <tbody>
                 {shownCreds.map((c) => (
-                  <tr key={c.commitment}>
-                    <td><HashText value={c.commitment} /></td>
+                  <tr key={c.commitment} className="row-link" onClick={(e) => { if (!e.target.closest('a,button')) navigate(`/verify?c=${c.commitment}`); }}>
+                    <td><HashText value={c.commitment} compact to={`/verify?c=${c.commitment}`} /></td>
                     <td>{c.issuer}</td>
                     <td>{fmt(c.date)}</td>
                     <td><span className={`badge ${c.revoked ? 'revoked' : 'valid'}`}>{c.revoked ? 'Revoked' : 'Valid'}</span></td>
@@ -98,7 +106,7 @@ function Explorer() {
                 {shownBatches.map((b) => (
                   <tr key={b.id}>
                     <td>{b.id}</td>
-                    <td><HashText value={b.root} /></td>
+                    <td><HashText value={b.root} compact /></td>
                     <td>{b.issuer}</td>
                     <td>{b.count}</td>
                     <td>{fmt(b.date)}</td>
@@ -108,6 +116,7 @@ function Explorer() {
             </table>
           )
         )}
+        {tab === 'credentials' ? end(shownCreds.length, 'credentials') : end(shownBatches.length, 'batches')}
       </div>
     </div>
   );

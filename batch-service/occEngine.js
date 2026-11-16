@@ -132,11 +132,17 @@ async function executeBatch(groups, executorFn) {
     const group = groups[g];
     const groupResults = await Promise.all(
       group.map(async (tx) => {
+        // Offsets in ms from batch start. The executor calls mark() once the tx is submitted;
+        // without a mark (early abort) submittedAt equals confirmedAt.
+        let submittedAt = null;
+        const mark = () => { submittedAt = Date.now() - startTime; };
         try {
-          const res = await executorFn(tx);
-          return { success: true, tx, result: res };
+          const res = await executorFn(tx, mark);
+          const confirmedAt = Date.now() - startTime;
+          return { success: true, tx, result: res, group: g, submittedAt: Math.min(submittedAt ?? confirmedAt, confirmedAt), confirmedAt };
         } catch (error) {
-          return { success: false, tx, error: error.message };
+          const confirmedAt = Date.now() - startTime;
+          return { success: false, tx, error: error.message, group: g, submittedAt: Math.min(submittedAt ?? confirmedAt, confirmedAt), confirmedAt };
         }
       })
     );
