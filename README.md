@@ -21,11 +21,11 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 | Feature | Description |
 |---------|-------------|
 | 🔐 **Identity-Bound Issuance** | Only admin-whitelisted institution EOAs can issue credentials on-chain |
-| ⛓️ **SHA-256 Credential Hashing** | Student metadata is hashed before anchoring — no PII on the public chain |
+| ⛓️ **Salted Commitments** | Only a salted SHA-256 commitment is anchored; student details stay in a credential file held by the student |
 | ⚡ **OCC Batch Processing** | Conflict-graph analysis + parallel submission of non-conflicting transactions |
 | 🌳 **Merkle Tree Anchoring** | Each batch computes a SHA-256 Merkle root stored on-chain for integrity auditing |
 | 🛡️ **Forgery Demo** | Interactive side-by-side comparison of a vulnerable system vs. ScholarLedger |
-| 🔍 **Instant Verification** | Gas-free `view` call — anyone with the hash can verify a credential |
+| 🔍 **Instant Verification** | Gas-free `view` call, no wallet needed. Upload the credential file (or paste the commitment) on `/verify` |
 | ❌ **On-Chain Revocation** | Only the original issuer can revoke, with immutable audit trail |
 
 ---
@@ -77,13 +77,16 @@ npx hardhat node
 cd ScholarLedger
 npx hardhat run scripts/deploy.js --network localhost
 ```
+On the local chain (31337) the deploy script also registers Hardhat Account #1 as **Demo University**, so issuing works right away.
 
 ### Terminal 3 — Start Batch Service
 ```bash
 cd ScholarLedger/batch-service
 npm install
+npm test      # engine and Merkle tests
 node server.js
 ```
+The service signs with `ISSUER_PRIVATE_KEY` (default: Hardhat Account #1, local dev only) and reads the chain at `RPC_URL` (default `http://127.0.0.1:8545`). The key never travels over HTTP.
 
 ### Terminal 4 — Start Frontend
 ```bash
@@ -99,8 +102,17 @@ Open **http://localhost:3000** in your browser.
    - **RPC URL:** `http://127.0.0.1:8545`
    - **Chain ID:** `31337`
    - **Currency:** `ETH`
-2. Import Hardhat Account #0 (the admin/deployer):
+2. Import Hardhat Account #0 (the admin/deployer, used on `/register`):
    - Private key: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
+3. Import Hardhat Account #1 (the Demo University issuer, used on `/issue` and `/revoke`):
+   - Private key: `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`
+
+These are the public Hardhat development keys. Never use them on a real network.
+
+`/verify`, `/explorer` and `/` read from the node directly and need no wallet.
+
+### Privacy note
+The chain stores only a salted commitment, the issuer, a timestamp and a revoked flag. The student's details live in a JSON credential file given to the student. The contract cannot detect re-issuance of the same student and program without seeing student data, so issuers dedupe off-chain (the batch service does this within one batch).
 
 ---
 
@@ -114,17 +126,20 @@ ScholarLedger/
 ├── scripts/
 │   └── deploy.js                 # Deploys contracts + exports ABIs to frontend
 ├── test/
-│   └── TrustAnchor.test.js       # 13 unit tests (forgery prevention, access control)
+│   └── TrustAnchor.test.js       # 18 unit tests (forgery prevention, access control, commitments, batches)
 ├── batch-service/
 │   ├── server.js                 # Express API (POST /api/batch/issue, /analyze)
 │   ├── occEngine.js              # OCC conflict detection + parallel grouping
-│   └── merkle.js                 # SHA-256 Merkle tree (Node.js crypto)
+│   ├── credential.js             # Salted commitment helpers
+│   ├── merkle.js                 # SHA-256 Merkle tree (Node.js crypto)
+│   └── test/engine.test.js       # node:test suite (npm test)
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/                # Dashboard, Register, Issue, BatchIssue, Verify,
+│   │   ├── pages/                # Home, Register, Issue, BatchIssue, Verify,
 │   │   │                         # Revoke, Explorer, ForgeryDemo
-│   │   ├── components/           # Navbar, MetaMaskConnect, StatusBadge
-│   │   └── utils/                # Contract helpers, SHA-256 hashing
+│   │   ├── components/           # Navbar, HashText, TxStatus, StatusPanel, FileDrop, PageHeader
+│   │   ├── styles/tokens.css     # Design tokens
+│   │   └── utils/                # Contract helpers, credential/commitment helpers, errors
 │   └── index.html
 ├── hardhat.config.js
 └── README.md
@@ -134,12 +149,12 @@ ScholarLedger/
 
 ## 🔬 How the OCC Engine Works
 
-1. **Input:** An array of credential transactions (studentId, programName, metadata).
-2. **Hash:** Each transaction's credential hash is computed with SHA-256.
-3. **Conflict Detection:** The engine builds read/write sets. Two transactions *conflict* if they share the same credential hash (duplicate issuance) or target the same credential for revocation.
-4. **Graph Coloring:** Non-conflicting transactions are grouped together using a conflict graph. Each color group can execute in parallel.
-5. **Parallel Submission:** Each group is submitted concurrently via `Promise.all` through ethers.js.
-6. **Merkle Root:** After all groups complete, a Merkle tree is built from all credential hashes and the root is stored on-chain via `storeMerkleRoot()`.
+1. **Input:** An array of credential rows (studentId, programName, metadata).
+2. **Commit:** Each row gets its own random salt and a SHA-256 commitment of `salt|studentId|programName|metadata`.
+3. **Conflict Detection:** Because salts make every commitment unique, rows conflict when they share the same `studentId|programName` key.
+4. **Graph Coloring:** Non-conflicting rows are grouped greedily. Each group can execute in parallel.
+5. **Validate and send:** Groups run in order. Rows in a group are sent with service-assigned nonces; a row whose key was already committed in this request aborts without being sent ("Duplicate of an earlier row in this batch").
+6. **Merkle Root:** A Merkle tree over the successful commitments is built and stored on-chain via `storeMerkleRoot()` (root, issuer, count, time). Each returned credential file carries its Merkle proof.
 
 ---
 
