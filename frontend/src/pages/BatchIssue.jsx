@@ -1,213 +1,192 @@
-import React, { useState } from 'react';
-import { deployedAddresses } from '../utils/contracts';
+import { useState } from 'react';
+import { CircleNotch, Plus, Trash, DownloadSimple } from '@phosphor-icons/react';
 import { downloadJson } from '../utils/credential';
+import PageHeader from '../components/PageHeader';
+import FileDrop from '../components/FileDrop';
+import HashText from '../components/HashText';
 
-const BATCH_API = 'http://localhost:3001/api/batch';
+const BATCH_API = import.meta.env.VITE_BATCH_API ?? 'http://localhost:3001/api/batch';
+const blank = () => ({ studentId: '', programName: '', metadata: '' });
+const SAMPLE = 'studentId,programName,metadata\nS1001,B.Tech CSE,2026\nS1002,B.Tech CSE,2026\nS1003,B.Sc Physics,2026\nS1001,B.Tech CSE,duplicate row\n';
+const keyOf = (t) => `${t.studentId.trim()}|${t.programName.trim()}`;
 
 function BatchIssue() {
-  const [rows, setRows] = useState([{ studentId: '', programName: '', metadata: '' }]);
-  const [file, setFile] = useState(null);
-  const [status, setStatus] = useState('');
-  const [metrics, setMetrics] = useState(null);
-  const [results, setResults] = useState(null);
-  const [merkleRoot, setMerkleRoot] = useState(null);
-  const [credentials, setCredentials] = useState([]);
-  const [batchId, setBatchId] = useState(null);
+  const [rows, setRows] = useState([blank()]);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [analysis, setAnalysis] = useState(null);
+  const [run, setRun] = useState(null);
 
-  const addRow = () => setRows([...rows, { studentId: '', programName: '', metadata: '' }]);
+  const update = (i, k, v) => setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  const valid = rows.filter((r) => r.studentId.trim() && r.programName.trim());
 
-  const updateRow = (i, field, value) => {
-    const updated = [...rows];
-    updated[i][field] = value;
-    setRows(updated);
+  const onFile = async (f) => {
+    const lines = (await f.text()).trim().split(/\r?\n/).slice(1);
+    const parsed = lines.map((l) => {
+      const [studentId = '', programName = '', ...rest] = l.split(',').map((s) => s.trim());
+      return { studentId, programName, metadata: rest.join(',') };
+    }).filter((r) => r.studentId);
+    if (parsed.length) setRows(parsed);
+    else setError('No rows found. Use the sample CSV as a template.');
   };
 
-  const removeRow = (i) => {
-    if (rows.length === 1) return;
-    setRows(rows.filter((_, idx) => idx !== i));
-  };
-
-  const handleFileUpload = (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    setFile(f);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target.result;
-      const lines = text.trim().split('\n').slice(1); // skip header
-      const parsed = lines.map(line => {
-        const [studentId, programName, metadata] = line.split(',').map(s => s.trim());
-        return { studentId: studentId || '', programName: programName || '', metadata: metadata || '' };
-      }).filter(r => r.studentId);
-      if (parsed.length > 0) setRows(parsed);
-    };
-    reader.readAsText(f);
-  };
-
-  const buildPayload = () => {
-    const validRows = rows.filter(r => r.studentId && r.programName);
-    if (validRows.length === 0) throw new Error('Add at least one valid row');
-    return {
-      transactions: validRows,
-      managerAddress: deployedAddresses.CredentialManager
-    };
-  };
-
-  const handleAnalyze = async () => {
+  const call = async (path, label) => {
+    setError('');
+    if (!valid.length) { setError('Add at least one row with a student ID and a program.'); return null; }
+    setBusy(label);
     try {
-      setStatus('Analyzing batch for conflicts...');
-      setMetrics(null);
-      const payload = buildPayload();
-      const res = await fetch(`${BATCH_API}/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const res = await fetch(`${BATCH_API}/${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transactions: valid })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Analysis failed');
-      setMetrics(data.metrics ? { totalTxs: data.metrics.total_txs, parallelBatches: data.metrics.parallel_batches, conflictsDetected: data.metrics.conflicts_detected } : null);
-      setStatus(`Analysis complete: ${data.conflicts.length} conflict(s) found, ${data.groups.length} parallel group(s).`);
+      if (!res.ok) throw new Error(data.error || 'The batch service rejected the request.');
+      return data;
     } catch (err) {
-      setStatus(`Error: ${err.message}`);
+      setError(err instanceof TypeError ? 'Cannot reach the batch service on port 3001. Start it with "node server.js" in batch-service.' : err.message);
+      return null;
+    } finally {
+      setBusy('');
     }
   };
 
-  const handleExecute = async () => {
-    try {
-      setStatus('Executing batch — submitting to blockchain...');
-      setMetrics(null);
-      setResults(null);
-      setMerkleRoot(null);
-      setCredentials([]);
-      const payload = buildPayload();
-      const res = await fetch(`${BATCH_API}/issue`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Execution failed');
-      setMetrics(data.metrics);
-      setResults(data.results.flat().map(r => ({ studentId: r.tx.studentId, programName: r.tx.programName, commitment: r.tx.commitment, success: r.success, txHash: r.result, error: r.error })));
-      setMerkleRoot(data.merkleRoot);
-      setCredentials(data.credentials);
-      setBatchId(data.batchId);
-      setStatus(`Batch complete: ${data.metrics.succeeded} succeeded, ${data.metrics.failed} failed.`);
-    } catch (err) {
-      setStatus(`Error: ${err.message}`);
-    }
+  const analyze = async () => {
+    const data = await call('analyze', 'analyze');
+    if (data) { setAnalysis(data); setRun(null); }
   };
+  const execute = async () => {
+    setRun(null);
+    const data = await call('issue', 'execute');
+    if (data) setRun(data);
+  };
+
+  const conflictKeys = new Set((analysis?.conflicts ?? []).map((c) => c.key));
+  const flat = run ? run.results.flat() : [];
 
   return (
     <div className="fade-in">
-      <div className="page-header">
-        <h1>Batch Issue Credentials</h1>
-        <p>Process multiple credentials concurrently using OCC engine</p>
-      </div>
+      <PageHeader title="Batch issue">
+        Issue many credentials at once. The service signs with the demo issuer key, so no wallet is needed here.
+      </PageHeader>
+      <p>
+        Rows for the same student and program conflict, so they go into different groups. Each group is sent in parallel,
+        then one Merkle root for the batch is anchored on the chain. This is the optimistic concurrency idea from Block-STM.
+      </p>
 
-      <div className="card">
-        <h3>Upload CSV or Add Rows Manually</h3>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-          CSV format: studentId, programName, metadata (with header row)
-        </p>
-        <input type="file" accept=".csv" onChange={handleFileUpload} />
-
-        <table>
-          <thead>
-            <tr>
-              <th>Student ID</th>
-              <th>Program</th>
-              <th>Metadata</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, i) => (
-              <tr key={i}>
-                <td><input value={row.studentId} onChange={e => updateRow(i, 'studentId', e.target.value)} placeholder="e.g. 2310110439" style={{ marginBottom: 0 }} /></td>
-                <td><input value={row.programName} onChange={e => updateRow(i, 'programName', e.target.value)} placeholder="e.g. B.Tech CSE" style={{ marginBottom: 0 }} /></td>
-                <td><input value={row.metadata} onChange={e => updateRow(i, 'metadata', e.target.value)} placeholder="Optional notes" style={{ marginBottom: 0 }} /></td>
-                <td><button onClick={() => removeRow(i)} style={{ background: 'var(--error-color)', padding: '8px 12px' }}>✕</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <button onClick={addRow} style={{ marginTop: '10px', background: 'var(--text-secondary)' }}>+ Add Row</button>
-      </div>
-
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-        <button onClick={handleAnalyze}>🔍 Analyze Conflicts</button>
-        <button onClick={handleExecute} style={{ background: 'var(--success-color)' }}>⚡ Execute Batch</button>
-      </div>
-
-      {status && (
-        <div className="result-box">
-          <p>{status}</p>
+      <section className="panel stack" aria-labelledby="rows-h">
+        <h2 id="rows-h">Rows</h2>
+        <div className="row">
+          <button type="button" className="secondary small" onClick={() => downloadText('sample-batch.csv', SAMPLE)}>
+            <DownloadSimple size={16} aria-hidden="true" /> Sample CSV
+          </button>
         </div>
-      )}
-
-      {metrics && (
-        <div className="stats-grid" style={{ marginTop: '24px' }}>
-          <div className="card stat-card">
-            <div className="stat-value">{metrics.totalTxs || metrics.totalTransactions || 0}</div>
-            <div className="stat-label">Total Transactions</div>
-          </div>
-          <div className="card stat-card">
-            <div className="stat-value">{metrics.parallelBatches || metrics.parallelGroups || 0}</div>
-            <div className="stat-label">Parallel Batches</div>
-          </div>
-          <div className="card stat-card">
-            <div className="stat-value">{metrics.conflictsDetected || 0}</div>
-            <div className="stat-label">Conflicts Detected</div>
-          </div>
-          {metrics.succeeded !== undefined && (
-            <>
-              <div className="card stat-card"><div className="stat-value">{metrics.succeeded}</div><div className="stat-label">Succeeded</div></div>
-              <div className="card stat-card"><div className="stat-value">{metrics.failed}</div><div className="stat-label">Failed</div></div>
-            </>
-          )}
-          <div className="card stat-card">
-            <div className="stat-value">{metrics.totalTimeMs ? `${metrics.totalTimeMs}ms` : '—'}</div>
-            <div className="stat-label">Total Time</div>
-          </div>
-          <div className="card stat-card">
-            <div className="stat-value">{metrics.throughputTxPerSec ? metrics.throughputTxPerSec.toFixed(1) : '—'}</div>
-            <div className="stat-label">Throughput (tx/sec)</div>
-          </div>
-        </div>
-      )}
-
-      {merkleRoot && (
-        <div className="result-box" style={{ marginTop: '24px' }}>
-          <p>Batch id: {batchId} | Merkle root: <code>{merkleRoot}</code></p>
-          <button onClick={() => downloadJson(`scholarledger-batch-${batchId}.json`, credentials)}>Download all credential files</button>
-          <p style={{ color: 'var(--error-color)' }}>These files are the only copy of the student details. Give each to its student.</p>
-        </div>
-      )}
-
-      {results && results.length > 0 && (
-        <div className="card" style={{ marginTop: '24px' }}>
-          <h3>Transaction Results</h3>
+        <FileDrop onFile={onFile} accept=".csv,text/csv" title="Upload a CSV" hint="Columns: studentId, programName, metadata (header row first)" />
+        <div className="table-wrap">
           <table>
-            <thead>
-              <tr><th>Student ID</th><th>Program</th><th>Status</th><th>Tx Hash</th><th></th></tr>
-            </thead>
+            <thead><tr><th>Student ID</th><th>Program</th><th>Details</th><th><span className="sr-only">Remove</span></th></tr></thead>
             <tbody>
-              {results.map((r, i) => (
+              {rows.map((r, i) => (
                 <tr key={i}>
-                  <td>{r.studentId}</td>
-                  <td>{r.programName}</td>
-                  <td><span className={`badge ${r.success ? 'valid' : 'invalid'}`}>{r.success ? 'SUCCESS' : 'FAILED'}</span></td>
-                  <td><code>{r.txHash ? `${r.txHash.slice(0, 10)}...${r.txHash.slice(-8)}` : r.error || '—'}</code></td>
-                  <td>{r.success && <button onClick={() => downloadJson(`scholarledger-${r.studentId}.json`, credentials.find(c => c.commitment === r.commitment))}>Download</button>}</td>
+                  <td><input aria-label={`Row ${i + 1} student ID`} value={r.studentId} onChange={(e) => update(i, 'studentId', e.target.value)} /></td>
+                  <td><input aria-label={`Row ${i + 1} program`} value={r.programName} onChange={(e) => update(i, 'programName', e.target.value)} /></td>
+                  <td><input aria-label={`Row ${i + 1} details`} value={r.metadata} onChange={(e) => update(i, 'metadata', e.target.value)} /></td>
+                  <td>
+                    <button type="button" className="secondary small" aria-label={`Remove row ${i + 1}`} disabled={rows.length === 1} onClick={() => setRows(rows.filter((_, x) => x !== i))}>
+                      <Trash size={16} aria-hidden="true" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <div className="row">
+          <button type="button" className="secondary" onClick={() => setRows([...rows, blank()])}><Plus size={16} aria-hidden="true" /> Add row</button>
+          <button type="button" className="secondary" onClick={analyze} disabled={!!busy}>Analyze conflicts</button>
+          <button type="button" onClick={execute} disabled={!!busy}>Execute batch</button>
+          {busy && <span role="status" className="row"><CircleNotch className="spin" size={20} aria-hidden="true" /> {busy === 'analyze' ? 'Analyzing.' : 'Sending to the chain.'}</span>}
+        </div>
+        {error && <p className="tx-status error" role="alert">{error}</p>}
+      </section>
+
+      {analysis && (
+        <section className="mt" aria-labelledby="an-h">
+          <h2 id="an-h">Analysis</h2>
+          <dl className="stats">
+            <div><dt>Rows</dt><dd>{analysis.metrics.total_txs}</dd></div>
+            <div><dt>Conflicts</dt><dd>{analysis.conflicts.length}</dd></div>
+            <div><dt>Parallel groups</dt><dd>{analysis.groups.length}</dd></div>
+          </dl>
+          <div className="groups mt">
+            {analysis.groups.map((g, i) => (
+              <div className="group" key={i}>
+                <h4>Group {i + 1} ({g.length} rows)</h4>
+                <ul>
+                  {g.map((t, j) => (
+                    <li key={j} className={conflictKeys.has(keyOf(t)) ? 'conflict' : ''} title={conflictKeys.has(keyOf(t)) ? 'Shares a student and program with another row' : ''}>
+                      {keyOf(t)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+          {analysis.conflicts.length > 0 && <p className="hint mt">Highlighted rows share a student and program with another row. Only the first is issued.</p>}
+        </section>
+      )}
+
+      {run && (
+        <section className="mt" aria-labelledby="run-h">
+          <h2 id="run-h">Result</h2>
+          <dl className="stats">
+            <div><dt>Succeeded</dt><dd>{run.metrics.succeeded}</dd></div>
+            <div><dt>Failed</dt><dd>{run.metrics.failed}</dd></div>
+            <div><dt>Total time</dt><dd>{(run.metrics.totalTimeMs / 1000).toFixed(2)} s</dd></div>
+            <div><dt>Throughput</dt><dd>{run.metrics.throughputTxPerSec.toFixed(1)} tx/s</dd></div>
+            <div><dt>Batch id</dt><dd>{run.batchId ?? '–'}</dd></div>
+          </dl>
+          {run.merkleRoot && <p className="mt">Merkle root: <HashText value={run.merkleRoot} /></p>}
+          {run.credentials.length > 0 && (
+            <>
+              <button type="button" onClick={() => downloadJson(`scholarledger-batch-${run.batchId}.json`, run.credentials)}>Download all credential files</button>
+              <p className="hint">These files are the only copy of the student details. Give each one to its student.</p>
+            </>
+          )}
+          <div className="table-wrap mt">
+            <table>
+              <thead><tr><th>Student ID</th><th>Program</th><th>Result</th><th>Credential file</th></tr></thead>
+              <tbody>
+                {flat.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.tx.studentId}</td>
+                    <td>{r.tx.programName}</td>
+                    <td>
+                      <span className={`badge ${r.success ? 'valid' : 'failed'}`}>{r.success ? 'Issued' : 'Failed'}</span>
+                      {!r.success && <span className="hint"> {r.error}</span>}
+                    </td>
+                    <td>
+                      {r.success && (
+                        <button type="button" className="secondary small" onClick={() => downloadJson(`scholarledger-${r.tx.studentId}.json`, run.credentials.find((c) => c.commitment === r.tx.commitment))}>
+                          Download
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </div>
   );
+}
+
+function downloadText(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 export default BatchIssue;

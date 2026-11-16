@@ -1,102 +1,126 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { CircleNotch } from '@phosphor-icons/react';
 import { getReadProvider, getCredentialManagerContract, getRegistryContract } from '../utils/contracts';
 import { parseCredentialFile, verifyMerkleProof } from '../utils/credential';
-import StatusBadge from '../components/StatusBadge';
+import { friendlyError } from '../utils/errors';
+import PageHeader from '../components/PageHeader';
+import FileDrop from '../components/FileDrop';
+import StatusPanel from '../components/StatusPanel';
+import HashText from '../components/HashText';
 
 function Verify() {
   const [hash, setHash] = useState('');
   const [result, setResult] = useState(null);
-  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  // Chain lookup for a commitment; `file` (already checked against its commitment) adds disclosure
+  // Chain lookup. `file` (already checked against its own commitment) adds disclosed fields and the batch proof.
   const lookup = async (commitment, file) => {
-    setStatus('Verifying...');
+    setBusy(true);
+    setError('');
+    setResult(null);
     try {
       const provider = getReadProvider();
       const manager = await getCredentialManagerContract(provider);
       const registry = await getRegistryContract(provider);
-
       const [isValid, issuer, issuedAt, isRevoked] = await manager.verifyCredential(commitment);
       if (issuedAt === 0n) {
-        setResult({ status: 'NOT FOUND' });
-      } else {
-        const institution = await registry.institutions(issuer);
-        const res = {
-          status: isRevoked ? 'REVOKED' : isValid ? 'VALID' : 'ISSUER DEREGISTERED',
-          issuer, institutionName: institution.name, timestamp: Number(issuedAt)
-        };
-        if (file) {
-          res.fields = { studentId: file.studentId, programName: file.programName, metadata: file.metadata };
-          if (file.batch) {
-            let ok = false;
-            try {
-              const b = await manager.batches(file.batch.batchId);
-              ok = b.merkleRoot === file.batch.merkleRoot
-                && await verifyMerkleProof(commitment, file.batch.proof, file.batch.merkleRoot);
-            } catch { ok = false; }
-            res.batchOk = ok;
+        setResult({ kind: 'NOT FOUND' });
+        return;
+      }
+      const res = {
+        kind: isRevoked ? 'REVOKED' : isValid ? 'VALID' : 'ISSUER DEREGISTERED',
+        issuer, issuedAt: Number(issuedAt), commitment,
+        institution: (await registry.institutions(issuer)).name
+      };
+      if (file) {
+        res.fields = file;
+        if (file.batch) {
+          try {
+            const b = await manager.batches(file.batch.batchId);
+            res.batchOk = b.merkleRoot === file.batch.merkleRoot && await verifyMerkleProof(commitment, file.batch.proof, file.batch.merkleRoot);
+          } catch {
+            res.batchOk = false;
           }
         }
-        setResult(res);
       }
-      setStatus('');
+      setResult(res);
     } catch (err) {
-      setStatus(`Error: ${err.reason || err.shortMessage || err.message} (is the node running?)`);
+      setError(`${friendlyError(err)} The ledger could not be reached.`);
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleFile = async (e) => {
-    const f = e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
+  const onFile = async (f) => {
     setResult(null);
+    setError('');
     try {
       const cred = await parseCredentialFile(await f.text());
       await lookup(cred.commitment, cred);
     } catch (err) {
-      setStatus(err.message); // parse errors never reach the chain
+      // Altered or malformed files never reach the chain.
+      if (/altered/.test(err.message)) setResult({ kind: 'ALTERED' });
+      else setError(err.message);
     }
   };
 
-  const handleHash = (e) => {
+  const onPaste = (e) => {
     e.preventDefault();
-    setResult(null);
     const h = hash.trim();
     if (!/^0x[0-9a-fA-F]{64}$/.test(h)) {
-      setStatus('Error: enter 0x followed by 64 hex characters');
+      setError('Enter 0x followed by 64 hex characters.');
       return;
     }
     lookup(h.toLowerCase(), null);
   };
 
   return (
-    <div className="card">
-      <h2>Verify Credential</h2>
-      <h3>Upload credential file</h3>
-      <input type="file" accept=".json,application/json" onChange={handleFile} />
-      <h3>Or paste commitment</h3>
-      <form onSubmit={handleHash}>
-        <input placeholder="Commitment (0x...)" value={hash} onChange={e => setHash(e.target.value)} required />
-        <button type="submit">Verify</button>
-      </form>
-      {status && <p>{status}</p>}
-      {result && (
-        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
-          <h3>Result: <StatusBadge status={result.status} /></h3>
-          {result.issuer && <p><strong>Issuer Address:</strong> {result.issuer}</p>}
-          {result.institutionName && <p><strong>Institution Name:</strong> {result.institutionName}</p>}
-          {result.timestamp && <p><strong>Issued At:</strong> {new Date(result.timestamp * 1000).toLocaleString()}</p>}
-          {result.fields && (
-            <>
-              <p><strong>Student ID:</strong> {result.fields.studentId}</p>
-              <p><strong>Program:</strong> {result.fields.programName}</p>
-              {result.fields.metadata && <p><strong>Metadata:</strong> {result.fields.metadata}</p>}
-            </>
-          )}
-          {result.batchOk === true && <p>Batch proof: OK</p>}
-          {result.batchOk === false && <p style={{ color: 'var(--error-color)' }}>Warning: the batch proof does not check out.</p>}
+    <div className="fade-in">
+      <PageHeader title="Verify a credential">
+        Upload the credential file the graduate gave you. No wallet is needed.
+      </PageHeader>
+      <div className="split">
+        <div className="stack">
+          <FileDrop onFile={onFile} accept=".json,application/json" title="Upload credential file" hint="Drop a .json file here, or press to choose one" />
+          <form onSubmit={onPaste} className="panel" noValidate>
+            <div className="field">
+              <label htmlFor="paste">Or paste a commitment</label>
+              <input id="paste" className="mono" value={hash} onChange={(e) => setHash(e.target.value)} placeholder="0x..." aria-describedby="paste-hint" />
+              <p className="hint" id="paste-hint">A commitment shows validity, issuer and date only. The student details need the file.</p>
+            </div>
+            <button type="submit" className="secondary" disabled={busy}>Check commitment</button>
+          </form>
+          {busy && <p role="status" className="row"><CircleNotch className="spin" size={20} aria-hidden="true" /> Checking the ledger.</p>}
+          {error && <p className="tx-status error" role="alert">{error}</p>}
         </div>
-      )}
+
+        <div>
+          {result && (
+            <StatusPanel kind={result.kind}>
+              {result.institution && (
+                <dl className="facts">
+                  <dt>Issuer</dt><dd>{result.institution}</dd>
+                  <dt>Issuer address</dt><dd><HashText value={result.issuer} /></dd>
+                  <dt>Issued</dt><dd>{new Date(result.issuedAt * 1000).toLocaleString()}</dd>
+                  <dt>Commitment</dt><dd><HashText value={result.commitment} /></dd>
+                  {result.fields && <>
+                    <dt>Student ID</dt><dd>{result.fields.studentId}</dd>
+                    <dt>Program</dt><dd>{result.fields.programName}</dd>
+                    {result.fields.metadata && <><dt>Details</dt><dd>{result.fields.metadata}</dd></>}
+                  </>}
+                  {result.batchOk !== undefined && <>
+                    <dt>Batch proof</dt>
+                    <dd>{result.batchOk ? 'Checks out against the stored Merkle root.' : 'Warning: the batch proof does not check out.'}</dd>
+                  </>}
+                </dl>
+              )}
+              {result.institution && <p className="mt"><Link to="/explorer">See it on the ledger</Link></p>}
+            </StatusPanel>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,0 +1,65 @@
+/* Design tokens: registrar's ledger. Light by default, dark via prefers-color-scheme. */
+:root {
+  --font-display: 'Fraunces Variable', Georgia, 'Times New Roman', serif;
+  --font-ui: 'Public Sans Variable', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+
+  --paper: #f7f3ea;
+  --surface: #fffdf8;
+  --sunken: #efe9db;
+  --ink: #1d1a16;
+  --ink-2: #4a4437;
+  --muted: #655e4f;
+  --rule: #d6cdb9;
+  --accent: #1f5a43;
+  --accent-hover: #174634;
+  --on-accent: #fffdf8;
+  --accent-wash: #e3eee6;
+  --danger: #8a2a1c;
+  --danger-wash: #f5e3de;
+  --warn: #7a5200;
+  --warn-wash: #f6ead0;
+  --focus: #1f5a43;
+
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.625rem;
+  --step-3: clamp(2rem, 1.4rem + 2.4vw, 3.25rem);
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2.25rem;
+  --space-7: 3.5rem;
+  --space-8: 5.5rem;
+
+  --radius: 6px;
+  --shadow: 0 1px 2px rgb(40 30 10 / 0.06), 0 6px 18px -8px rgb(40 30 10 / 0.18);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --measure: 68ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15130f;
+    --surface: #1d1a15;
+    --sunken: #12100c;
+    --ink: #efe9db;
+    --ink-2: #cfc7b3;
+    --muted: #a69e89;
+    --rule: #3a3529;
+    --accent: #86c9a8;
+    --accent-hover: #a2dbbf;
+    --on-accent: #0f2a20;
+    --accent-wash: #1c2b24;
+    --danger: #ee8c7a;
+    --danger-wash: #31201c;
+    --warn: #e3b765;
+    --warn-wash: #2e2512;
+    --focus: #86c9a8;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 20px -10px rgb(0 0 0 / 0.6);
+  }
+}

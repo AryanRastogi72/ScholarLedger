@@ -1,48 +1,52 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { getSigner, getCredentialManagerContract } from '../utils/contracts';
 import { parseCredentialFile } from '../utils/credential';
+import { useTx } from '../utils/useTx';
+import PageHeader from '../components/PageHeader';
+import TxStatus from '../components/TxStatus';
+import FileDrop from '../components/FileDrop';
 
 function Revoke() {
-  const [hash, setHash] = useState('');
-  const [status, setStatus] = useState('');
+  const [commitment, setCommitment] = useState('');
+  const [fileError, setFileError] = useState('');
+  const [touched, setTouched] = useState(false);
+  const { tx, run } = useTx();
+  const valid = /^0x[0-9a-fA-F]{64}$/.test(commitment.trim());
 
-  const handleFile = async (e) => {
-    const f = e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
+  const onFile = async (f) => {
+    setFileError('');
     try {
-      setHash((await parseCredentialFile(await f.text())).commitment);
-      setStatus('');
+      setCommitment((await parseCredentialFile(await f.text())).commitment);
     } catch (err) {
-      setStatus(`Error: ${err.message}`);
+      setFileError(err.message);
     }
   };
 
-  const handleRevoke = async (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    setStatus('Processing...');
-    try {
-      const signer = await getSigner();
-      const manager = await getCredentialManagerContract(signer);
-      const tx = await manager.revokeCredential(hash.trim());
-      setStatus(`Transaction pending: ${tx.hash}`);
-      await tx.wait();
-      setStatus('Success! Credential revoked.');
-    } catch (err) {
-      setStatus(`Error: ${err.reason || err.shortMessage || err.message}`);
-    }
+    setTouched(true);
+    if (!valid) return;
+    await run(async () => (await getCredentialManagerContract(await getSigner())).revokeCredential(commitment.trim()));
   };
 
   return (
-    <div className="card">
-      <h2>Revoke Credential</h2>
-      <p>Only the original issuer can revoke a credential. Paste a commitment or upload the credential file.</p>
-      <input type="file" accept=".json,application/json" onChange={handleFile} />
-      <form onSubmit={handleRevoke}>
-        <input placeholder="Commitment (0x...)" value={hash} onChange={e => setHash(e.target.value)} required />
-        <button type="submit" style={{ backgroundColor: 'var(--error-color)' }}>Revoke</button>
-      </form>
-      {status && <p style={{ marginTop: '15px' }}>{status}</p>}
+    <div className="narrow fade-in">
+      <PageHeader title="Revoke a credential">
+        Only the institution that issued a credential can revoke it. Revocation is permanent.
+      </PageHeader>
+      <div className="panel stack">
+        <FileDrop onFile={onFile} accept=".json,application/json" title="Upload the credential file" hint="Fills in the commitment for you" />
+        {fileError && <p className="field-error" role="alert">{fileError}</p>}
+        <form onSubmit={submit} noValidate>
+          <div className="field">
+            <label htmlFor="commitment">Or paste the commitment</label>
+            <input id="commitment" className="mono" value={commitment} onChange={(e) => setCommitment(e.target.value)} placeholder="0x..." aria-invalid={touched && !valid} aria-describedby="e-commitment" />
+            <p className="field-error" id="e-commitment">{touched && !valid ? 'Enter 0x followed by 64 hex characters.' : ''}</p>
+          </div>
+          <button type="submit" className="danger" disabled={tx.phase === 'wallet' || tx.phase === 'submitted'}>Revoke credential</button>
+        </form>
+      </div>
+      <div className="mt"><TxStatus tx={tx} /></div>
     </div>
   );
 }
