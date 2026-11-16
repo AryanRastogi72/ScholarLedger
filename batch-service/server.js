@@ -135,6 +135,7 @@ app.post('/api/batch/issue', async (req, res, next) => {
     };
     // With automine off a revert only shows up in the receipt; replay the call one block earlier for the reason.
     const reasonOf = async (e, sent) => {
+      if (e.code === 'TIMEOUT') return 'Timed out waiting for confirmation';
       const direct = /reason string '([^']+)'/.exec(e.message);
       if (direct) return direct[1];
       if (e.receipt) {
@@ -168,7 +169,7 @@ app.post('/api/batch/issue', async (req, res, next) => {
         mark();
         submitted = true;
         if (blockPerGroup) await settleSubmit(g);
-        const receipt = await sent.wait(); // throws on revert
+        const receipt = await sent.wait(1, 30_000); // throws on revert; the timeout stops a nonce gap from hanging the request
         blocks[tx.idx] = receipt.blockNumber;
         committedKeys.add(conflictKey(tx));
         return receipt.hash;

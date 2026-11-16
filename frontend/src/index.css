@@ -351,5 +351,7 @@ tr:hover .copy-icon, tr:focus-within .copy-icon, .copy-icon:focus-visible { opac
 .check input { width: 1.25rem; height: 1.25rem; min-height: 0; accent-color: var(--accent); }
 .speedup { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3) var(--space-5); margin: var(--space-4) 0; }
 .speedup-fig { font-family: var(--font-display); font-weight: 700; font-size: clamp(3.5rem, 12vw, 6rem); line-height: 1; color: var(--accent); margin: 0; max-width: none; font-variant-numeric: tabular-nums; }
-.speedup p:last-child { max-width: 36ch; margin: 0; font-size: var(--step-1); color: var(--ink-2); }
+.speedup p:nth-child(2) { max-width: 36ch; margin: 0; font-size: var(--step-1); color: var(--ink-2); }
 .empty { max-width: none; }
+.speedup-note { flex-basis: 100%; max-width: 60ch; margin: 0; }
+.speedup p.speedup-note { font-size: var(--step--1); color: var(--muted); max-width: 60ch; }

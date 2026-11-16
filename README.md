@@ -167,9 +167,9 @@ One run of 50 conflict-free rows, sequential first, then grouped (different prog
 | Sequential | 2505 ms | 20.0 tx/s | 50 |
 | Grouped | 310 ms | 161.3 tx/s | 1 |
 
-That is about 8.1 times faster. The numbers come from the `metrics` object the service returned for that run; they vary from run to run and by machine. On the local node a block per group makes the concurrency visible. On a real chain the network decides block packing itself, so expect the shape (rows of a group submitted together) but not these figures.
+That is about 8.1 times faster. The numbers come from the `metrics` object the service returned for that run; they vary from run to run and by machine. The EVM still runs a block's transactions one after another; the speedup comes from submitting a group's rows without waiting for each other and confirming them in one block. On the local node a block per group makes this visible. On a real chain the network decides block packing itself, so expect the shape (rows of a group submitted together) but not these figures.
 
-If the batch service is killed in the middle of a group, the node may be left with automine off. Restart `npx hardhat node`, or send `evm_setAutomine true` to it.
+If the batch service is killed in the middle of a group, the node may be left with automine off. Restart `npx hardhat node`, or send `evm_setAutomine true` to it. Each row waits at most 30 seconds for its confirmation and then fails with "Timed out waiting for confirmation"; a timed-out run may leave pending transactions, so restart the node.
 
 ---
 

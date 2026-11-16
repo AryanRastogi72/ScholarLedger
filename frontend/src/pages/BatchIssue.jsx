@@ -221,6 +221,7 @@ function Comparison({ cmp }) {
       <div className="speedup">
         <p className="speedup-fig" aria-label={`Speedup ${speedup.toFixed(1)} times`}>{speedup.toFixed(1)}&times;</p>
         <p>faster when conflict-free rows are submitted together instead of one at a time. Both runs issued the same {seq.metrics.totalTxs} rows on this machine.</p>
+        <p className="hint speedup-note">The EVM still runs a block&apos;s transactions one after another. The speedup comes from submitting a group&apos;s rows without waiting for each other and confirming them in one block.</p>
       </div>
       <div className="split">{col('Sequential', seq)}{col('Grouped', grp)}</div>
       <h3>Sequential timeline</h3>
