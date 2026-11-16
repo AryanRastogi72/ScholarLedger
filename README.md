@@ -156,6 +156,21 @@ ScholarLedger/
 5. **Validate and send:** Groups run in order. Rows in a group do not wait for each other: they are submitted back to back with service-assigned nonces and confirmed together (a local Hardhat node mines one transaction per block, so throughput is bounded). A row whose key was already committed in this request aborts without being sent ("Duplicate of an earlier row in this batch").
 6. **Merkle Root:** A Merkle tree over the successful commitments is built and stored on-chain via `storeMerkleRoot()` (root, issuer, count, time). Each returned credential file carries its Merkle proof.
 
+### Measured on this machine
+
+`POST /api/batch/issue` takes `mode: "grouped"` (default) or `"sequential"`. On the local Hardhat node (chain 31337) a grouped run turns automine off, submits every row of a group, mines one block for the group, then turns automine back on before anchoring the Merkle root. Sequential sends one row at a time and waits for each receipt (the classic baseline). The `/batch` page has a "Compare with sequential" switch that runs both and draws the two timelines on one time axis.
+
+One run of 50 conflict-free rows, sequential first, then grouped (different program text so no row is a duplicate), Hardhat 2.x local node, Windows laptop:
+
+| Mode | Total time | Throughput | Blocks used |
+|------|-----------:|-----------:|------------:|
+| Sequential | 2505 ms | 20.0 tx/s | 50 |
+| Grouped | 310 ms | 161.3 tx/s | 1 |
+
+That is about 8.1 times faster. The numbers come from the `metrics` object the service returned for that run; they vary from run to run and by machine. On the local node a block per group makes the concurrency visible. On a real chain the network decides block packing itself, so expect the shape (rows of a group submitted together) but not these figures.
+
+If the batch service is killed in the middle of a group, the node may be left with automine off. Restart `npx hardhat node`, or send `evm_setAutomine true` to it.
+
 ---
 
 ## 📚 References

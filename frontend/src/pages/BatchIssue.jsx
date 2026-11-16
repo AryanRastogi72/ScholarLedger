@@ -17,6 +17,8 @@ function BatchIssue() {
   const [error, setError] = useState('');
   const [analysis, setAnalysis] = useState(null);
   const [run, setRun] = useState(null);
+  const [compare, setCompare] = useState(false);
+  const [cmp, setCmp] = useState(null);
 
   const update = (i, k, v) => setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
   const valid = rows.filter((r) => r.studentId.trim() && r.programName.trim());
@@ -31,13 +33,13 @@ function BatchIssue() {
     else setError('No rows found. Use the sample CSV as a template.');
   };
 
-  const call = async (path, label) => {
+  const call = async (path, label, body = { transactions: valid }) => {
     setError('');
     if (!valid.length) { setError('Add at least one row with a student ID and a program.'); return null; }
     setBusy(label);
     try {
       const res = await fetch(`${BATCH_API}/${path}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transactions: valid })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'The batch service rejected the request.');
@@ -56,8 +58,19 @@ function BatchIssue() {
   };
   const execute = async () => {
     setRun(null);
-    const data = await call('issue', 'execute');
-    if (data) setRun(data);
+    setCmp(null);
+    if (!compare) {
+      const data = await call('issue', 'execute');
+      if (data) setRun(data);
+      return;
+    }
+    // Same rows twice: one at a time, then grouped. The grouped copy gets " (g)" so nothing is a duplicate across runs.
+    const seq = await call('issue', 'sequential', { mode: 'sequential', transactions: valid });
+    if (!seq) return;
+    const grp = await call('issue', 'grouped', { mode: 'grouped', transactions: valid.map((r) => ({ ...r, programName: `${r.programName} (g)` })) });
+    if (!grp) return;
+    setCmp({ seq, grp });
+    setRun(grp);
   };
 
   const analysisRef = useReveal(analysis);
@@ -105,8 +118,10 @@ function BatchIssue() {
           <button type="button" className="secondary" onClick={() => setRows([...rows, blank()])}><Plus size={16} aria-hidden="true" /> Add row</button>
           <button type="button" className="secondary" onClick={analyze} disabled={!!busy}>Analyze conflicts</button>
           <button type="button" onClick={execute} disabled={!!busy}>Execute batch</button>
-          {busy && <span role="status" className="row"><CircleNotch className="spin" size={20} aria-hidden="true" /> {busy === 'analyze' ? 'Analyzing.' : 'Sending to the chain.'}</span>}
+          <label className="check"><input type="checkbox" checked={compare} onChange={(e) => setCompare(e.target.checked)} /> Compare with sequential</label>
+          {busy && <span role="status" className="row"><CircleNotch className="spin" size={20} aria-hidden="true" /> {({ analyze: 'Analyzing.', sequential: 'Running one row at a time.', grouped: 'Running grouped.' })[busy] ?? 'Sending to the chain.'}</span>}
         </div>
+        {compare && <p className="hint">Runs the rows twice, so every row is issued twice. The grouped run uses a copy of your rows with (g) added to the program name, so no row counts as a duplicate across the two runs.</p>}
         {error && <p className="tx-status error" role="alert">{error}</p>}
       </section>
 
@@ -144,9 +159,13 @@ function BatchIssue() {
             <div><dt>Failed</dt><dd>{run.metrics.failed}</dd></div>
             <div><dt>Batch id</dt><dd>{run.batchId ?? '–'}</dd></div>
           </dl>
-          <h3>Timeline</h3>
-          <p className="hint">One lane per group. Each bar runs from the moment a row was submitted to the moment it was confirmed, measured by the service.</p>
-          <BatchTimeline results={run.results} conflicts={run.conflicts ?? []} metrics={run.metrics} merkleRoot={run.merkleRoot} />
+          {cmp ? <Comparison cmp={cmp} /> : (
+            <>
+              <h3>Timeline</h3>
+              <p className="hint">One lane per group. Each bar runs from the moment a row was submitted to the moment it was confirmed, measured by the service.{run.metrics.blockPerGroup ? ' On the local node each group is mined as one block.' : ''}</p>
+              <BatchTimeline results={run.results} conflicts={run.conflicts ?? []} metrics={run.metrics} merkleRoot={run.merkleRoot} />
+            </>
+          )}
           {run.credentials.length > 0 && (
             <>
               <button type="button" onClick={() => downloadJson(`scholarledger-batch-${run.batchId}.json`, run.credentials)}>Download all credential files</button>
@@ -179,6 +198,36 @@ function BatchIssue() {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+function Comparison({ cmp }) {
+  const { seq, grp } = cmp;
+  const speedup = seq.metrics.totalTimeMs / Math.max(1, grp.metrics.totalTimeMs);
+  const axis = Math.max(seq.metrics.totalTimeMs, grp.metrics.totalTimeMs);
+  const col = (title, d) => (
+    <div>
+      <h3>{title}</h3>
+      <dl className="facts">
+        <dt>Total time</dt><dd>{(d.metrics.totalTimeMs / 1000).toFixed(2)} s</dd>
+        <dt>Throughput</dt><dd>{d.metrics.throughputTxPerSec.toFixed(1)} tx/s</dd>
+        <dt>Blocks used</dt><dd>{d.metrics.blocksUsed}</dd>
+      </dl>
+    </div>
+  );
+  return (
+    <div className="compare">
+      <div className="speedup">
+        <p className="speedup-fig" aria-label={`Speedup ${speedup.toFixed(1)} times`}>{speedup.toFixed(1)}&times;</p>
+        <p>faster when conflict-free rows are submitted together instead of one at a time. Both runs issued the same {seq.metrics.totalTxs} rows on this machine.</p>
+      </div>
+      <div className="split">{col('Sequential', seq)}{col('Grouped', grp)}</div>
+      <h3>Sequential timeline</h3>
+      <p className="hint">One row at a time, each waiting for its block. Same time axis as below.</p>
+      <BatchTimeline results={seq.results} conflicts={[]} metrics={seq.metrics} merkleRoot={seq.merkleRoot} maxTime={axis} mergeLanes laneName="Sequential" showStats={false} />
+      <h3>Grouped timeline</h3>
+      <BatchTimeline results={grp.results} conflicts={grp.conflicts ?? []} metrics={grp.metrics} merkleRoot={grp.merkleRoot} maxTime={axis} showStats={false} />
     </div>
   );
 }

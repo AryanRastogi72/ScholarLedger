@@ -137,7 +137,7 @@ async function executeBatch(groups, executorFn) {
         let submittedAt = null;
         const mark = () => { submittedAt = Date.now() - startTime; };
         try {
-          const res = await executorFn(tx, mark);
+          const res = await executorFn(tx, mark, { group: g, size: group.length });
           const confirmedAt = Date.now() - startTime;
           return { success: true, tx, result: res, group: g, submittedAt: Math.min(submittedAt ?? confirmedAt, confirmedAt), confirmedAt };
         } catch (error) {

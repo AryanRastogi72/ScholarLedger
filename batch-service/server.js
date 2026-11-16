@@ -9,7 +9,7 @@ const { newSalt, computeCommitment } = require('./credential');
 const { analyzeBatch, executeBatch } = require('./occEngine');
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT ?? 3001;
 
 // Middleware
 app.use(cors());
@@ -73,7 +73,8 @@ app.post('/api/batch/analyze', (req, res, next) => {
 
 app.post('/api/batch/issue', async (req, res, next) => {
   try {
-    const { transactions, managerAddress } = req.body;
+    const { transactions, managerAddress, mode = 'grouped' } = req.body;
+    if (mode !== 'grouped' && mode !== 'sequential') return res.status(400).json({ error: 'mode must be "grouped" or "sequential"' });
     const err = validateRows(transactions);
     if (err) return res.status(400).json({ error: err });
 
@@ -91,31 +92,100 @@ app.post('/api/batch/issue', async (req, res, next) => {
     const wallet = new ethers.Wallet(process.env.ISSUER_PRIVATE_KEY ?? HARDHAT_ACCOUNT_1_KEY, provider);
     const manager = new ethers.Contract(managerAddress || deployment.addresses.CredentialManager, deployment.managerAbi, wallet);
 
-    // Service assigns nonces itself so parallel sends never collide
+    const { chainId } = await provider.getNetwork();
+    // Local dev node only: mine one block per group so the group's parallelism is visible on chain.
+    const blockPerGroup = mode === 'grouped' && chainId === 31337n;
+    const GAS = 200_000; // issue costs about 83k; a low limit keeps a whole group inside one block
+
+    // Fee data fetched once and passed explicitly, so each send is just sign + submit (no per-tx RPC lookups)
+    const fees = await provider.getFeeData();
+    const feeOpts = { type: 2, chainId, maxFeePerGas: (fees.maxFeePerGas ?? 2_000_000_000n) * 2n, maxPriorityFeePerGas: fees.maxPriorityFeePerGas ?? 1_000_000_000n };
+
+    // Service assigns nonces itself so sends never collide
     let nextNonce = await provider.getTransactionCount(wallet.address, 'pending');
 
-    // Dev nodes with automine reject out-of-order nonces, so submissions go out in nonce
-    // order (queue below) while confirmations are awaited in parallel.
+    // Submissions go out in nonce order (queue below); confirmations are awaited in parallel.
     let sendQueue = Promise.resolve();
     const committedKeys = new Set(); // OCC validation: keys already committed in this request
-    const executorFn = async (tx, mark) => {
-      if (committedKeys.has(conflictKey(tx))) throw new Error('Duplicate of an earlier row in this batch');
-      const nonce = nextNonce++; // taken synchronously, before any await
-      const sending = sendQueue.then(() => manager.issueCredential(tx.commitment, { nonce, gasLimit: 500_000 }));
-      sendQueue = sending.catch(() => {});
+    const blocks = {}; // row idx -> block number
+    const groupState = {}; // blockPerGroup: per group { ready, remaining, expectedNonce }
+
+    const prepareGroup = (g, size) => {
+      if (!groupState[g]) {
+        const st = { ready: provider.send('evm_setAutomine', [false]), remaining: size };
+        st.mined = new Promise((resolve) => { st.resolveMined = resolve; });
+        groupState[g] = st;
+      }
+      return groupState[g];
+    };
+    // One tx of the group has been submitted (or aborted). When all are in, mine the group's block(s).
+    const settleSubmit = async (g) => {
+      const st = groupState[g];
+      if (--st.remaining > 0) return st.mined; // wait for the last submitter to mine the block
+      await st.ready;
       try {
-        const sent = await sending;
+        for (let i = 0; i < 20; i++) {
+          await provider.send('evm_mine', []);
+          if (await provider.getTransactionCount(wallet.address, 'latest') >= nextNonce) break;
+        }
+      } finally {
+        st.resolveMined();
+      }
+      return undefined;
+    };
+    // With automine off a revert only shows up in the receipt; replay the call one block earlier for the reason.
+    const reasonOf = async (e, sent) => {
+      const direct = /reason string '([^']+)'/.exec(e.message);
+      if (direct) return direct[1];
+      if (e.receipt) {
+        try {
+          await provider.call({ from: wallet.address, to: sent.to, data: sent.data, blockTag: e.receipt.blockNumber - 1 });
+        } catch (r) {
+          const m = /reason string '([^']+)'/.exec(r.message) ?? /reverted with reason string '([^']+)'/.exec(String(r.info?.error?.message));
+          if (m) return m[1];
+        }
+      }
+      return e.reason ?? e.shortMessage ?? e.message;
+    };
+
+    const executorFn = async (tx, mark, ctx) => {
+      const g = ctx.group;
+      if (blockPerGroup) prepareGroup(g, ctx.size);
+      let sent;
+      let submitted = false;
+      try {
+        if (committedKeys.has(conflictKey(tx))) throw new Error('Duplicate of an earlier row in this batch');
+        const nonce = nextNonce++; // taken synchronously, before any await
+        const send = async () => {
+          if (blockPerGroup) await groupState[g].ready;
+          return manager.issueCredential(tx.commitment, { nonce, gasLimit: GAS, ...feeOpts });
+        };
+        // Automine off: the node queues future nonces, so a group's sends can all be in flight at once.
+        // Automine on: the node rejects out-of-order nonces, so sends go out in nonce order.
+        const sending = blockPerGroup ? send() : sendQueue.then(send);
+        if (!blockPerGroup) sendQueue = sending.catch(() => {});
+        sent = await sending;
         mark();
+        submitted = true;
+        if (blockPerGroup) await settleSubmit(g);
         const receipt = await sent.wait(); // throws on revert
+        blocks[tx.idx] = receipt.blockNumber;
         committedKeys.add(conflictKey(tx));
         return receipt.hash;
       } catch (e) {
-        const m = /reason string '([^']+)'/.exec(e.message);
-        throw new Error(m ? m[1] : e.reason ?? e.shortMessage ?? e.message);
+        if (blockPerGroup && !submitted) await settleSubmit(g);
+        throw new Error(await reasonOf(e, sent ?? {}));
       }
     };
 
-    const execResults = await executeBatch(analysis.groups, executorFn);
+    // sequential: one row at a time, wait for each receipt, automine on (the classic baseline)
+    const groups = mode === 'sequential' ? rows.map((r) => [r]) : analysis.groups;
+    let execResults;
+    try {
+      execResults = await executeBatch(groups, executorFn);
+    } finally {
+      if (blockPerGroup && Object.keys(groupState).length) await provider.send('evm_setAutomine', [true]);
+    }
 
     const flat = execResults.results.flat();
     const ok = flat.filter(r => r.success);
@@ -134,7 +204,6 @@ app.post('/api/batch/issue', async (req, res, next) => {
         const ev = manager.interface.parseLog(log);
         if (ev?.name === 'BatchProcessed') batchId = Number(ev.args.batchId);
       }
-      const { chainId } = await provider.getNetwork();
       const contract = await manager.getAddress();
       credentials = ok.map((r, i) => ({
         format: 'scholarledger-credential/1',
@@ -152,7 +221,7 @@ app.post('/api/batch/issue', async (req, res, next) => {
     }
 
     // Do not return salts in the per-row results; they travel only inside `credentials`
-    const results = execResults.results.map(g => g.map(({ tx, ...rest }) => ({ ...rest, tx: { idx: tx.idx, studentId: tx.studentId, programName: tx.programName, commitment: tx.commitment } })));
+    const results = execResults.results.map(g => g.map(({ tx, ...rest }) => ({ ...rest, blockNumber: blocks[tx.idx] ?? null, tx: { idx: tx.idx, studentId: tx.studentId, programName: tx.programName, commitment: tx.commitment } })));
 
     return res.json({
       success: true,
@@ -167,6 +236,9 @@ app.post('/api/batch/issue', async (req, res, next) => {
         conflictsDetected: analysis.metrics.conflicts_detected,
         succeeded,
         failed,
+        mode,
+        blockPerGroup,
+        blocksUsed: new Set(Object.values(blocks)).size,
         totalTimeMs: execResults.metrics.totalTimeMs,
         throughputTxPerSec: execResults.metrics.throughputTxPerSec
       }

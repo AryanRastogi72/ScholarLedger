@@ -228,16 +228,19 @@ section[tabindex='-1'] { scroll-margin-top: 5rem; }
 .cert-serial span { color: var(--cert-ink); }
 .cert-seal { width: clamp(4.5rem, 22cqi, 6.5rem); flex: none; color: var(--cert-accent); transform: rotate(-8deg); }
 .cert-watermark { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: clamp(2.4rem, 14cqi, 4rem); letter-spacing: 0.1em; text-transform: uppercase; color: rgb(60 50 20 / 0.07); transform: rotate(-20deg); pointer-events: none; margin: 0; }
+/* The stamp lives in its own band between the body and the footer, so it never covers text. */
+.cert-stampband { display: flex; justify-content: flex-end; align-items: center; min-height: 4rem; margin-top: var(--space-3); padding-right: var(--space-3); position: relative; }
 .cert-stamp {
-  position: absolute; right: clamp(1rem, 6cqi, 2rem); top: clamp(3.6rem, 18cqi, 5.6rem); margin: 0; max-width: none;
+  --rot: -9deg; --scale: 1; position: relative; margin: 0; max-width: none;
   padding: 0.15em 0.6em; border: 3px solid currentColor; outline: 1px solid currentColor; outline-offset: 2px; border-radius: 4px;
   font-family: var(--font-ui); font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; font-size: clamp(1rem, 6cqi, 1.6rem);
-  transform: rotate(-9deg); mix-blend-mode: multiply; background: rgb(251 247 236 / 0.55);
+  transform: rotate(var(--rot)) scale(var(--scale)); transform-origin: right center; mix-blend-mode: multiply; background: rgb(251 247 236 / 0.55);
 }
 .cert-stamp.valid { color: var(--cert-accent); }
-.cert-stamp.revoked { color: var(--cert-danger); font-size: clamp(1.4rem, 9cqi, 2.4rem); transform: rotate(-16deg); }
-.cert-stamp.altered { color: var(--cert-danger); transform: rotate(-5deg); }
+.cert-stamp.revoked { color: var(--cert-danger); --rot: -14deg; font-size: clamp(1.3rem, 8cqi, 2.2rem); }
+.cert-stamp.altered { color: var(--cert-danger); --rot: -5deg; }
 .cert-stamp.warn { color: var(--cert-warn); font-size: clamp(0.8rem, 4.5cqi, 1.2rem); }
+@container (max-width: 420px) { .cert-stamp { --scale: 0.7; } .cert-stampband { min-height: 3.4rem; } }
 .cert.is-revoked .cert-student, .cert.is-revoked .cert-program { opacity: 0.8; }
 .cert.is-claimed .cert-student, .cert.is-claimed .cert-program, .cert.is-claimed .cert-meta, .cert.is-claimed .cert-institution { text-decoration: line-through 2px var(--cert-danger); text-decoration-skip-ink: none; }
 .cert.is-altered .cert-inner { clip-path: polygon(0 0, 100% 0, 100% 94%, 96% 97%, 92% 94%, 88% 98%, 83% 95%, 78% 99%, 72% 95%, 66% 98%, 60% 95%, 54% 99%, 47% 95%, 41% 98%, 35% 94%, 29% 98%, 23% 95%, 17% 99%, 11% 95%, 5% 98%, 0 95%); }
@@ -342,3 +345,11 @@ tr:hover .copy-icon, tr:focus-within .copy-icon, .copy-icon:focus-visible { opac
 }
 .cert.is-revoked .cert-seal { color: var(--cert-danger); }
 .cert-wrap { margin-bottom: var(--space-4); }
+
+/* ---------- compare view ---------- */
+.check { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 500; margin: 0; cursor: pointer; }
+.check input { width: 1.25rem; height: 1.25rem; min-height: 0; accent-color: var(--accent); }
+.speedup { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3) var(--space-5); margin: var(--space-4) 0; }
+.speedup-fig { font-family: var(--font-display); font-weight: 700; font-size: clamp(3.5rem, 12vw, 6rem); line-height: 1; color: var(--accent); margin: 0; max-width: none; font-variant-numeric: tabular-nums; }
+.speedup p:last-child { max-width: 36ch; margin: 0; font-size: var(--step-1); color: var(--ink-2); }
+.empty { max-width: none; }

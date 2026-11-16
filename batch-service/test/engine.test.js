@@ -62,3 +62,18 @@ test('every result row has numeric submittedAt <= confirmedAt', async () => {
   assert.ok(rows[0].submittedAt > 0 && rows[0].submittedAt < rows[0].confirmedAt);
   assert.strictEqual(rows[2].submittedAt, rows[2].confirmedAt);
 });
+
+test('issue endpoint rejects an unknown mode with 400', async () => {
+  const { spawn } = require('node:child_process');
+  const path = require('node:path');
+  const port = 3999;
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(port) }, stdio: 'pipe' });
+  try {
+    await new Promise((res, rej) => { child.stdout.on('data', (d) => /running/.test(String(d)) && res()); child.on('error', rej); setTimeout(() => rej(new Error('server did not start')), 5000); });
+    const r = await fetch(`http://127.0.0.1:${port}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'parallel', transactions: [{ studentId: 'A', programName: 'B' }] }) });
+    assert.strictEqual(r.status, 400);
+    assert.match((await r.json()).error, /mode/);
+  } finally {
+    child.kill();
+  }
+});

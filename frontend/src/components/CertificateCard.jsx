@@ -47,6 +47,7 @@ function CertificateCard({ institution, issuer, studentId, programName, metadata
             <p className="cert-meta">Student details are held by the student. Upload the credential file to show them.</p>
           )}
         </div>
+        {stamp && <div className="cert-stampband"><p className={`cert-stamp ${stamp.cls}`}>{stamp.text}</p></div>}
         <div className="cert-foot">
           <div>
             {date && <p className="cert-date">{date}</p>}
@@ -55,7 +56,6 @@ function CertificateCard({ institution, issuer, studentId, programName, metadata
           {issuer && <Seal address={issuer} />}
         </div>
         {specimen && <p className="cert-watermark" aria-hidden="true">Specimen</p>}
-        {stamp && <p className={`cert-stamp ${stamp.cls}`}>{stamp.text}</p>}
       </div>
     </figure>
   );

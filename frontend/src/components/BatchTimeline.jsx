@@ -2,24 +2,27 @@ import { useMemo } from 'react';
 import HashText from './HashText';
 
 const W = 760;
-const LEFT = 78;
+const LEFT = 104;
 const RIGHT = 16;
 const PLOT = W - LEFT - RIGHT;
 const LANE_GAP = 14;
 
 // Real timings only: every bar runs from the row's submit time to its confirm time,
 // as reported by the batch service (ms from batch start). One lane per group.
-function BatchTimeline({ results, conflicts, metrics, merkleRoot }) {
+function BatchTimeline({ results, conflicts, metrics, merkleRoot, maxTime = 0, mergeLanes = false, laneName = 'Group', showStats = true }) {
   const model = useMemo(() => {
-    const rows = results.flat();
-    const total = Math.max(1, ...rows.map((r) => r.confirmedAt));
+    const rows = results.flat().map((r) => (mergeLanes ? { ...r, group: 0 } : r));
+    // maxTime lets stacked timelines share one time axis
+    const total = Math.max(1, maxTime, ...rows.map((r) => r.confirmedAt));
     const groups = [...new Set(rows.map((r) => r.group))].sort((a, b) => a - b);
     const pitch = (n) => Math.max(2.5, Math.min(8, 220 / n));
     let y = 24;
     const lanes = groups.map((g) => {
       const inLane = rows.filter((r) => r.group === g);
       const p = pitch(inLane.length);
-      const lane = { g, top: y, p, height: inLane.length * p + 12 };
+      const bn = inLane.map((r) => r.blockNumber).filter((b) => b != null);
+      const blocks = bn.length ? (Math.min(...bn) === Math.max(...bn) ? `block ${bn[0]}` : `blocks ${Math.min(...bn)}\u2013${Math.max(...bn)}`) : '';
+      const lane = { g, top: y, p, blocks, height: inLane.length * p + 12 };
       y += lane.height + LANE_GAP;
       return lane;
     });
@@ -31,7 +34,7 @@ function BatchTimeline({ results, conflicts, metrics, merkleRoot }) {
       });
     });
     return { total, lanes, x, pos, height: y + 18 };
-  }, [results]);
+  }, [results, maxTime, mergeLanes]);
 
   const { total, lanes, x, pos, height } = model;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * total);
@@ -50,7 +53,8 @@ function BatchTimeline({ results, conflicts, metrics, merkleRoot }) {
           {lanes.map((lane) => (
             <g key={lane.g}>
               <rect x={LEFT - 6} y={lane.top} width={PLOT + 12} height={lane.height} rx="4" fill="var(--surface)" stroke="var(--rule)" />
-              <text x="8" y={lane.top + 18} fill="var(--ink)" fontFamily="var(--font-ui)" fontSize="12" fontWeight="600">Group {lane.g + 1}</text>
+              <text x="8" y={lane.top + 18} fill="var(--ink)" fontFamily="var(--font-ui)" fontSize="12" fontWeight="600">{mergeLanes ? laneName : `${laneName} ${lane.g + 1}`}</text>
+              {lane.blocks && <text x="8" y={lane.top + 32} fill="var(--muted)" fontFamily="var(--font-mono)" fontSize="10">{lane.blocks}</text>}
             </g>
           ))}
           {conflicts.map((c) => {
@@ -87,11 +91,11 @@ function BatchTimeline({ results, conflicts, metrics, merkleRoot }) {
         <span><i className="sw warn" /> Aborted duplicate</span>
         <span><i className="sw line" /> Conflict: waited for the row it clashes with</span>
       </figcaption>
-      <dl className="stats mt">
+      {showStats && <dl className="stats mt">
         <div><dt>Total time</dt><dd>{(metrics.totalTimeMs / 1000).toFixed(2)} s</dd></div>
         <div><dt>Throughput</dt><dd>{metrics.throughputTxPerSec.toFixed(1)} tx/s</dd></div>
         <div><dt>Merkle root</dt><dd className="root-cell">{merkleRoot ? <HashText value={merkleRoot} /> : '–'}</dd></div>
-      </dl>
+      </dl>}
     </figure>
   );
 }
