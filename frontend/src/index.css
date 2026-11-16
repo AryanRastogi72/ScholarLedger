@@ -98,10 +98,10 @@ input.mono { font-family: var(--font-mono); }
 
 /* ---------- hash text ---------- */
 .hash { display: inline-flex; align-items: center; gap: var(--space-2); }
-.hash code { background: var(--sunken); padding: 1px var(--space-2); border-radius: 3px; }
+.hash code { background: var(--sunken); padding: 1px var(--space-2); border-radius: 3px; white-space: nowrap; }
 
 /* ---------- tables ---------- */
-.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
+.table-wrap { position: relative; overflow-x: auto; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
 table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
 th, td { text-align: left; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--rule); vertical-align: middle; }
 th { font-size: var(--step--1); color: var(--ink-2); font-weight: 600; background: var(--sunken); white-space: nowrap; }
@@ -197,3 +197,8 @@ td input { min-height: 36px; padding: var(--space-2); min-width: 8rem; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .cta { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); font-weight: 600; border-radius: var(--radius); }
+
+.reveal:focus, section[tabindex='-1']:focus { outline: none; }
+.reveal { scroll-margin-top: 5rem; }
+section[tabindex='-1'] { scroll-margin-top: 5rem; }
+@media (pointer: coarse) { button.small { min-height: 44px; } }

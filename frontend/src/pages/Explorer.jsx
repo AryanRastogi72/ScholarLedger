@@ -58,7 +58,7 @@ function Explorer() {
       <PageHeader title="The ledger">
         Every credential and batch on the chain. Only commitments appear here, never student details.
       </PageHeader>
-      {error && <p className="tx-status error" role="alert">{error}</p>}
+      {error && <p className="tx-status error" role="alert"><span>{error}</span></p>}
       <div className="row mt">
         <div className="tabs" role="tablist" aria-label="Ledger view">
           {['credentials', 'batches'].map((t) => (
@@ -75,7 +75,7 @@ function Explorer() {
 
       <div className="table-wrap" role="tabpanel">
         {tab === 'credentials' ? (
-          shownCreds.length === 0 ? (creds ? empty('credentials') : <p className="empty">Loading.</p>) : (
+          shownCreds.length === 0 ? (creds || error ? (error ? <p className="empty">No data to show.</p> : empty('credentials')) : <p className="empty">Loading.</p>) : (
             <table>
               <thead><tr><th>Commitment</th><th>Issuer</th><th>Date</th><th>Status</th></tr></thead>
               <tbody>

@@ -150,6 +150,11 @@ describe("TrustAnchor Contracts", function () {
       await expect(manager.connect(institution2).storeMerkleRoot(r, 1)).to.be.revertedWith("Not a registered institution");
     });
 
+    it("storeMerkleRoot rejects a count above uint32", async function () {
+      const r = ethers.keccak256(ethers.toUtf8Bytes("r"));
+      await expect(manager.connect(institution1).storeMerkleRoot(r, 2n ** 32n)).to.be.revertedWith("Batch too large");
+    });
+
     it("commitment test vector matches", async function () {
       const c = "0x" + require("crypto").createHash("sha256").update("0".repeat(64) + "|S1|BTech|").digest("hex");
       expect(c).to.equal("0x2225df7e8e27bd1a06ead6224e43eecc4f02d8507b5a5f71aa31b7e695e22372");

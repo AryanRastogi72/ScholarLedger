@@ -61,7 +61,7 @@ function Home() {
         <h2 id="live">The ledger right now</h2>
         {offline ? (
           <p className="tx-status error" role="alert">
-            Node offline. Start the local chain with <code>npx hardhat node</code> and deploy the contracts to see live numbers.
+            <span>Node offline. Start the local chain with <code>npx hardhat node</code> and deploy the contracts to see live numbers.</span>
           </p>
         ) : (
           <dl className="stats">
@@ -104,13 +104,13 @@ function Home() {
           <h2 id="occ">Batch issuance with conflict detection</h2>
           <p>
             A graduation day means thousands of credentials. The batch service finds rows that clash, such as the same student
-            and program twice, places them in different groups, sends each group in parallel, then anchors one Merkle root for
+            and program twice, places them in different groups, and submits the rows of a group back to back without waiting for each other. Conflicting rows wait for the next group and are re-checked first. Then it anchors one Merkle root for
             everything that succeeded. This follows the optimistic concurrency idea from Block-STM.
           </p>
           <p><Link to="/batch">Open batch issue</Link></p>
         </div>
         <ol className="pipeline" aria-label="Batch pipeline">
-          <li>Conflict graph</li><li>Groups</li><li>Parallel send</li><li>Merkle root</li>
+          <li>Conflict graph</li><li>Groups</li><li>Back-to-back send</li><li>Merkle root</li>
         </ol>
       </section>
 

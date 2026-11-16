@@ -12,7 +12,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 **ScholarLedger** closes this gap with two core innovations:
 
 1. **Identity-Bound Issuance** — An on-chain `InstitutionRegistry` whitelists verified university addresses. The `CredentialManager` contract enforces that **only registered institutions** can issue credentials.
-2. **Optimistic Concurrency Control (OCC) Batch Engine** — An off-chain Node.js service inspired by Block-STM (Gelashvili et al., PPoPP 2023) that detects read/write conflicts among credential transactions and parallelizes non-conflicting ones, dramatically improving throughput during peak issuance periods (e.g., graduation season).
+2. **Optimistic Concurrency Control (OCC) Batch Engine** — An off-chain Node.js service inspired by Block-STM (Gelashvili et al., PPoPP 2023) that detects read/write conflicts among credential transactions and submits non-conflicting ones back to back without waiting for each other, which suits peak issuance periods (e.g., graduation season).
 
 ---
 
@@ -22,7 +22,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 |---------|-------------|
 | 🔐 **Identity-Bound Issuance** | Only admin-whitelisted institution EOAs can issue credentials on-chain |
 | ⛓️ **Salted Commitments** | Only a salted SHA-256 commitment is anchored; student details stay in a credential file held by the student |
-| ⚡ **OCC Batch Processing** | Conflict-graph analysis + parallel submission of non-conflicting transactions |
+| ⚡ **OCC Batch Processing** | Conflict-graph analysis + back-to-back submission of non-conflicting transactions |
 | 🌳 **Merkle Tree Anchoring** | Each batch computes a SHA-256 Merkle root stored on-chain for integrity auditing |
 | 🛡️ **Forgery Demo** | Interactive side-by-side comparison of a vulnerable system vs. ScholarLedger |
 | 🔍 **Instant Verification** | Gas-free `view` call, no wallet needed. Upload the credential file (or paste the commitment) on `/verify` |
@@ -126,7 +126,7 @@ ScholarLedger/
 ├── scripts/
 │   └── deploy.js                 # Deploys contracts + exports ABIs to frontend
 ├── test/
-│   └── TrustAnchor.test.js       # 18 unit tests (forgery prevention, access control, commitments, batches)
+│   └── TrustAnchor.test.js       # 19 unit tests (forgery prevention, access control, commitments, batches)
 ├── batch-service/
 │   ├── server.js                 # Express API (POST /api/batch/issue, /analyze)
 │   ├── occEngine.js              # OCC conflict detection + parallel grouping
@@ -152,8 +152,8 @@ ScholarLedger/
 1. **Input:** An array of credential rows (studentId, programName, metadata).
 2. **Commit:** Each row gets its own random salt and a SHA-256 commitment of `salt|studentId|programName|metadata`.
 3. **Conflict Detection:** Because salts make every commitment unique, rows conflict when they share the same `studentId|programName` key.
-4. **Graph Coloring:** Non-conflicting rows are grouped greedily. Each group can execute in parallel.
-5. **Validate and send:** Groups run in order. Rows in a group are sent with service-assigned nonces; a row whose key was already committed in this request aborts without being sent ("Duplicate of an earlier row in this batch").
+4. **Graph Coloring:** Non-conflicting rows are grouped greedily. Rows in a group do not conflict, so they are submitted together.
+5. **Validate and send:** Groups run in order. Rows in a group do not wait for each other: they are submitted back to back with service-assigned nonces and confirmed together (a local Hardhat node mines one transaction per block, so throughput is bounded). A row whose key was already committed in this request aborts without being sent ("Duplicate of an earlier row in this batch").
 6. **Merkle Root:** A Merkle tree over the successful commitments is built and stored on-chain via `storeMerkleRoot()` (root, issuer, count, time). Each returned credential file carries its Merkle proof.
 
 ---

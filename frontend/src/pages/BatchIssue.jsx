@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CircleNotch, Plus, Trash, DownloadSimple } from '@phosphor-icons/react';
 import { downloadJson } from '../utils/credential';
+import { useReveal } from '../utils/useReveal';
 import PageHeader from '../components/PageHeader';
 import FileDrop from '../components/FileDrop';
 import HashText from '../components/HashText';
@@ -59,6 +60,8 @@ function BatchIssue() {
     if (data) setRun(data);
   };
 
+  const analysisRef = useReveal(analysis);
+  const runRef = useReveal(run);
   const conflictKeys = new Set((analysis?.conflicts ?? []).map((c) => c.key));
   const flat = run ? run.results.flat() : [];
 
@@ -68,8 +71,7 @@ function BatchIssue() {
         Issue many credentials at once. The service signs with the demo issuer key, so no wallet is needed here.
       </PageHeader>
       <p>
-        Rows for the same student and program conflict, so they go into different groups. Each group is sent in parallel,
-        then one Merkle root for the batch is anchored on the chain. This is the optimistic concurrency idea from Block-STM.
+        Rows for the same student and program conflict, so they go into different groups. Rows in a group do not wait for each other: they are submitted back to back and confirmed together. Conflicting rows wait for the next group and are re-checked first. Then one Merkle root for the batch is anchored on the chain. This is the optimistic concurrency idea from Block-STM.
       </p>
 
       <section className="panel stack" aria-labelledby="rows-h">
@@ -109,12 +111,12 @@ function BatchIssue() {
       </section>
 
       {analysis && (
-        <section className="mt" aria-labelledby="an-h">
+        <section className="mt" aria-labelledby="an-h" ref={analysisRef} tabIndex={-1}>
           <h2 id="an-h">Analysis</h2>
           <dl className="stats">
             <div><dt>Rows</dt><dd>{analysis.metrics.total_txs}</dd></div>
             <div><dt>Conflicts</dt><dd>{analysis.conflicts.length}</dd></div>
-            <div><dt>Parallel groups</dt><dd>{analysis.groups.length}</dd></div>
+            <div><dt>Groups</dt><dd>{analysis.groups.length}</dd></div>
           </dl>
           <div className="groups mt">
             {analysis.groups.map((g, i) => (
@@ -135,7 +137,7 @@ function BatchIssue() {
       )}
 
       {run && (
-        <section className="mt" aria-labelledby="run-h">
+        <section className="mt" aria-labelledby="run-h" ref={runRef} tabIndex={-1}>
           <h2 id="run-h">Result</h2>
           <dl className="stats">
             <div><dt>Succeeded</dt><dd>{run.metrics.succeeded}</dd></div>

@@ -78,6 +78,7 @@ contract CredentialManager {
         require(registry.isRegistered(msg.sender), "Not a registered institution");
         require(root != bytes32(0), "Invalid root");
         require(count > 0, "Empty batch");
+        require(count <= type(uint32).max, "Batch too large");
 
         batchId = batches.length;
         batches.push(Batch({

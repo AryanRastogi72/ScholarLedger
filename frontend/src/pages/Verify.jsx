@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CircleNotch } from '@phosphor-icons/react';
 import { getReadProvider, getCredentialManagerContract, getRegistryContract } from '../utils/contracts';
 import { parseCredentialFile, verifyMerkleProof } from '../utils/credential';
 import { friendlyError } from '../utils/errors';
+import { useReveal } from '../utils/useReveal';
 import PageHeader from '../components/PageHeader';
 import FileDrop from '../components/FileDrop';
 import StatusPanel from '../components/StatusPanel';
@@ -14,6 +15,8 @@ function Verify() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const revealRef = useReveal(result ?? error);
+  const [params] = useSearchParams();
 
   // Chain lookup. `file` (already checked against its own commitment) adds disclosed fields and the batch proof.
   const lookup = async (commitment, file) => {
@@ -39,7 +42,7 @@ function Verify() {
         if (file.batch) {
           try {
             const b = await manager.batches(file.batch.batchId);
-            res.batchOk = b.merkleRoot === file.batch.merkleRoot && await verifyMerkleProof(commitment, file.batch.proof, file.batch.merkleRoot);
+            res.batchOk = b.merkleRoot === file.batch.merkleRoot && b.issuer.toLowerCase() === issuer.toLowerCase() && await verifyMerkleProof(commitment, file.batch.proof, file.batch.merkleRoot);
           } catch {
             res.batchOk = false;
           }
@@ -52,6 +55,16 @@ function Verify() {
       setBusy(false);
     }
   };
+
+  // /verify?c=0x... checks that commitment automatically (used by the Ledger rows)
+  const prefill = params.get('c');
+  useEffect(() => {
+    if (prefill && /^0x[0-9a-fA-F]{64}$/.test(prefill)) {
+      setHash(prefill);
+      lookup(prefill.toLowerCase(), null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
 
   const onFile = async (f) => {
     setResult(null);
@@ -93,10 +106,10 @@ function Verify() {
             <button type="submit" className="secondary" disabled={busy}>Check commitment</button>
           </form>
           {busy && <p role="status" className="row"><CircleNotch className="spin" size={20} aria-hidden="true" /> Checking the ledger.</p>}
-          {error && <p className="tx-status error" role="alert">{error}</p>}
         </div>
 
-        <div>
+        <div ref={revealRef} tabIndex={-1} className="reveal">
+          {error && <p className="tx-status error" role="alert">{error}</p>}
           {result && (
             <StatusPanel kind={result.kind}>
               {result.institution && (
