@@ -64,14 +64,14 @@ app.post('/api/batch/analyze', (req, res, next) => {
   try {
     const err = validateRows(req.body.transactions);
     if (err) return res.status(400).json({ error: err });
-    const analysis = analyzeBatch(withCommitment(req.body.transactions), conflictKey);
+    const analysis = analyzeBatch(req.body.transactions, conflictKey);
     res.json({ success: true, ...analysis });
   } catch (error) {
     next(error);
   }
 });
 
-app.post('/api/batch/issue', async (req, res, next) => {
+async function issueBatch(req, res, next) {
   try {
     const { transactions, managerAddress, mode = 'grouped' } = req.body;
     if (mode !== 'grouped' && mode !== 'sequential') return res.status(400).json({ error: 'mode must be "grouped" or "sequential"' });
@@ -95,7 +95,7 @@ app.post('/api/batch/issue', async (req, res, next) => {
     const { chainId } = await provider.getNetwork();
     // Local dev node only: mine one block per group so the group's parallelism is visible on chain.
     const blockPerGroup = mode === 'grouped' && chainId === 31337n;
-    const GAS = 200_000; // issue costs about 83k; a low limit keeps a whole group inside one block
+    const GAS = 200_000; // issue costs about 61k; a low limit keeps a whole group inside one block
 
     // Fee data fetched once and passed explicitly, so each send is just sign + submit (no per-tx RPC lookups)
     const fees = await provider.getFeeData();
@@ -247,6 +247,12 @@ app.post('/api/batch/issue', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+}
+
+// shortcut: one batch at a time per service (nonces come from one issuer key); fine for one issuer
+let lock = Promise.resolve();
+app.post('/api/batch/issue', (req, res, next) => {
+  lock = lock.then(() => issueBatch(req, res, next)); // issueBatch reports its own errors via next
 });
 
 // Error handling middleware

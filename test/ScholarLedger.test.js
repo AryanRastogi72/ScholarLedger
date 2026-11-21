@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("TrustAnchor Contracts", function () {
+describe("ScholarLedger Contracts", function () {
   let InstitutionRegistry, registry, CredentialManager, manager;
   let admin, institution1, institution2, student;
 

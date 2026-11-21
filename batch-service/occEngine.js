@@ -4,19 +4,18 @@
 
 /**
  * Analyzes a batch of transactions to compute conflicts and group non-conflicting ones.
- * 
- * Two transactions conflict if they share the same credentialHash, which signifies a duplicate
- * issuance attempt or parallel operations on the same credential.
- * 
+ * Two transactions conflict if keyFn gives them the same key (a duplicate issuance attempt).
+ *
  * @param {Array} transactions Array of transaction objects
- * @param {Function} keyFn Maps a tx to its conflict key (default: credentialHash)
+ * @param {Function} keyFn Maps a tx to its conflict key
  * @returns {Object} { groups, conflicts, metrics }
  */
-const defaultKey = (tx) => tx.credentialHash;
-
-function analyzeBatch(transactions, keyFn = defaultKey) {
+function analyzeBatch(transactions, keyFn) {
   if (!transactions || !Array.isArray(transactions)) {
     throw new Error('Invalid transactions array');
+  }
+  if (typeof keyFn !== 'function') {
+    throw new Error('keyFn must be a function');
   }
 
   const numTxs = transactions.length;
@@ -24,12 +23,10 @@ function analyzeBatch(transactions, keyFn = defaultKey) {
     return {
       groups: [],
       conflicts: [],
-      metrics: { total_txs: 0, parallel_batches: 0, conflicts_detected: 0, throughput: 0, time_ms: 0 }
+      metrics: { total_txs: 0, parallel_batches: 0, conflicts_detected: 0 }
     };
   }
 
-  // 1. & 2. Compute Read-Sets and Write-Sets
-  // Here, both read-set and write-set are just { credentialHash }
   const txNodes = transactions.map((tx, index) => ({
     tx,
     index,
@@ -41,8 +38,6 @@ function analyzeBatch(transactions, keyFn = defaultKey) {
   let conflictsDetected = 0;
   const conflicts = [];
 
-  // O(N^2) comparison - suitable for small to medium batches
-  // In a real high-throughput engine, a hash map would be used to build the graph faster.
   const hashToTxIndices = new Map();
   for (let i = 0; i < numTxs; i++) {
     const node = txNodes[i];
@@ -55,7 +50,7 @@ function analyzeBatch(transactions, keyFn = defaultKey) {
       for (const existingIndex of existingIndices) {
         txNodes[i].conflictsWith.add(existingIndex);
         txNodes[existingIndex].conflictsWith.add(i);
-        conflicts.push({ txA: existingIndex, txB: i, reason: keyFn === defaultKey ? 'Duplicate credentialHash' : 'Same student and program', key: node.hash });
+        conflicts.push({ txA: existingIndex, txB: i, reason: 'Same student and program', key: node.hash });
         conflictsDetected++;
       }
       existingIndices.push(i);

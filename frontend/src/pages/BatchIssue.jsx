@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CircleNotch, Plus, Trash, DownloadSimple } from '@phosphor-icons/react';
-import { downloadJson } from '../utils/credential';
+import { download, downloadJson } from '../utils/credential';
 import { useReveal } from '../utils/useReveal';
 import PageHeader from '../components/PageHeader';
 import FileDrop from '../components/FileDrop';
@@ -90,7 +90,7 @@ function BatchIssue() {
       <section className="panel stack" aria-labelledby="rows-h">
         <h2 id="rows-h">Rows</h2>
         <div className="row">
-          <button type="button" className="secondary small" onClick={() => downloadText('sample-batch.csv', SAMPLE)}>
+          <button type="button" className="secondary small" onClick={() => download('sample-batch.csv', SAMPLE, 'text/csv')}>
             <DownloadSimple size={16} aria-hidden="true" /> Sample CSV
           </button>
         </div>
@@ -231,14 +231,6 @@ function Comparison({ cmp }) {
       <BatchTimeline results={grp.results} conflicts={grp.conflicts ?? []} metrics={grp.metrics} merkleRoot={grp.merkleRoot} maxTime={axis} showStats={false} />
     </div>
   );
-}
-
-function downloadText(name, text) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(a.href);
 }
 
 export default BatchIssue;

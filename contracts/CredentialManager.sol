@@ -22,7 +22,7 @@ contract CredentialManager {
     InstitutionRegistry public registry;
 
     mapping(bytes32 => Credential) public credentials;
-    bytes32[] public credentialHashes;
+    uint256 public credentialCount;
     Batch[] public batches;
 
     event CredentialIssued(bytes32 indexed commitment, address indexed issuer, uint256 issuedAt);
@@ -43,7 +43,7 @@ contract CredentialManager {
             issuedAt: uint64(block.timestamp),
             isRevoked: false
         });
-        credentialHashes.push(commitment);
+        credentialCount++;
 
         emit CredentialIssued(commitment, msg.sender, block.timestamp);
     }
@@ -91,7 +91,7 @@ contract CredentialManager {
     }
 
     function getCredentialCount() external view returns (uint256) {
-        return credentialHashes.length;
+        return credentialCount;
     }
 
     function getBatchCount() external view returns (uint256) {

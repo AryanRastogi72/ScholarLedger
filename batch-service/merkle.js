@@ -70,4 +70,4 @@ function verifyMerkleProof(leaf, proof, root) {
   return hash === root;
 }
 
-module.exports = { sha256, buildMerkleTree, getMerkleProof, verifyMerkleProof };
+module.exports = { buildMerkleTree, verifyMerkleProof };

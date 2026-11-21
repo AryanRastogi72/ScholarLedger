@@ -17,7 +17,7 @@ export async function getSigner() {
   return provider.getSigner();
 }
 
-export async function getRegistryContract(signerOrProvider) {
+export function getRegistryContract(signerOrProvider) {
   return new ethers.Contract(
     deployedAddresses.InstitutionRegistry,
     InstitutionRegistryABI.abi,
@@ -25,12 +25,10 @@ export async function getRegistryContract(signerOrProvider) {
   );
 }
 
-export async function getCredentialManagerContract(signerOrProvider) {
+export function getCredentialManagerContract(signerOrProvider) {
   return new ethers.Contract(
     deployedAddresses.CredentialManager,
     CredentialManagerABI.abi,
     signerOrProvider
   );
 }
-
-export { deployedAddresses };

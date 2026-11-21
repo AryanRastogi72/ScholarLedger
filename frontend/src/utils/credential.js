@@ -47,11 +47,13 @@ export async function verifyMerkleProof(leafHex, proof, rootHex) {
   return h === strip0x(rootHex);
 }
 
-export function downloadJson(filename, obj) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
+export function download(filename, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }
+
+export const downloadJson = (filename, obj) => download(filename, JSON.stringify(obj, null, 2), 'application/json');

@@ -64,7 +64,6 @@ function Verify() {
       setHash(prefill);
       lookup(prefill.toLowerCase(), null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill]);
 
   const onFile = async (f) => {

@@ -5,7 +5,7 @@ const { buildMerkleTree, verifyMerkleProof } = require('../merkle');
 
 test('duplicate hashes conflict and land in different groups', () => {
   const txs = ['a', 'b', 'a', 'c', 'd'].map(h => ({ credentialHash: h }));
-  const r = analyzeBatch(txs);
+  const r = analyzeBatch(txs, t => t.credentialHash);
   assert.strictEqual(r.conflicts.length, 1);
   assert.strictEqual(r.groups.length, 2);
   const g = (i) => r.groups.findIndex(grp => grp.includes(txs[i]));
@@ -13,7 +13,7 @@ test('duplicate hashes conflict and land in different groups', () => {
 });
 
 test('empty input gives zero groups', () => {
-  assert.strictEqual(analyzeBatch([]).groups.length, 0);
+  assert.strictEqual(analyzeBatch([], t => t.k).groups.length, 0);
 });
 
 test('merkle proofs verify for every leaf', () => {

@@ -126,7 +126,7 @@ ScholarLedger/
 ├── scripts/
 │   └── deploy.js                 # Deploys contracts + exports ABIs to frontend
 ├── test/
-│   └── TrustAnchor.test.js       # 19 unit tests (forgery prevention, access control, commitments, batches)
+│   └── ScholarLedger.test.js       # 19 unit tests (forgery prevention, access control, commitments, batches)
 ├── batch-service/
 │   ├── server.js                 # Express API (POST /api/batch/issue, /analyze)
 │   ├── occEngine.js              # OCC conflict detection + parallel grouping
