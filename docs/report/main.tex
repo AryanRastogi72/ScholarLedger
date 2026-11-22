@@ -31,7 +31,7 @@
 \maketitle
 \begin{abstract}
 \noindent
-ScholarLedger is a decentralized application (DApp) in which universities issue academic credentials on an Ethereum chain and anyone can verify them without a wallet. It addresses three weaknesses of hash-anchoring credential systems. First, the forgery attack of Zonneveld et al.\ on Block.co: a hash on a chain proves integrity but not who anchored it. ScholarLedger binds issuance to an on-chain registry of institutions, so the contract itself reverts a credential sent from an unregistered wallet. Second, privacy on a public chain: the chain stores only a salted SHA-256 commitment, and the student keeps a credential file that opens it. Third, volume on graduation day: an off-chain batch service, inspired by Block-STM and by optimistic concurrent execution of smart contracts, groups rows by conflicts, submits each conflict-free group without waiting and confirms it in one block, then anchors one Merkle root per batch. On a local Hardhat node, 50 conflict-free credentials took 310\,ms in one block against 2505\,ms over 50 blocks sequentially (about $8.1\times$; repeat runs gave $7.2$--$8.7\times$). The system has 24 contract tests and 13 service tests, all passing, and all six manual MetaMask checks passed with the real extension. An independent audit of the submission led to a final round of fixes, which we report with the limitations that remain. We state where the speedup comes from and what it does not show.
+ScholarLedger is a decentralized application (DApp) in which universities issue academic credentials on an Ethereum chain and anyone can verify them without a wallet. It addresses three weaknesses of hash-anchoring credential systems. First, the forgery attack of Zonneveld et al.\ on Block.co: a hash on a chain proves integrity but not who anchored it. ScholarLedger binds issuance to an on-chain registry of institutions, so the contract itself reverts a credential sent from an unregistered wallet. Second, privacy on a public chain: the chain stores only a salted SHA-256 commitment, and the student keeps a credential file that opens it. Third, volume on graduation day: an off-chain batch service, inspired by Block-STM and by optimistic concurrent execution of smart contracts, groups rows by conflicts, submits each conflict-free group without waiting and confirms it in one block, then anchors one Merkle root per batch. On a local Hardhat node, 50 conflict-free credentials took 310\,ms in one block against 2505\,ms over 50 blocks sequentially (about $8.1\times$; repeat runs gave $7.2$--$8.7\times$). Changes to the registry of institutions need two of three admins to approve. The system has 31 contract tests and 13 service tests, all passing, and all six manual MetaMask checks passed with the real extension. An independent audit of the submission led to a final round of fixes, which we report with the limitations that remain. We state where the speedup comes from and what it does not show.
 \end{abstract}
 \vspace{10pt}
 ]
@@ -98,7 +98,7 @@ Figure~\ref{fig:arch} shows the architecture. Three programs run locally. A Hard
 
 
 
-\textbf{Contracts.} \texttt{InstitutionRegistry} maps an address to a name, domain, registration time, active flag and a validity cutoff; only the deployer (the admin) can register or deregister, and a deregistered address can never be registered again. \texttt{CredentialManager} stores, per commitment, the issuer, the issue time and a revoked flag, and per batch a Merkle root, issuer, count and time. Table~\ref{tab:functions} lists the functions. No string about a student appears in storage or in any event.
+\textbf{Contracts.} \texttt{InstitutionRegistry} maps an address to a name, domain, registration time, active flag and a validity cutoff; registering or deregistering is a proposal that executes only when two of the three admins fixed at deployment have approved it, and a deregistered address can never be registered again. \texttt{CredentialManager} stores, per commitment, the issuer, the issue time and a revoked flag, and per batch a Merkle root, issuer, count and time. Table~\ref{tab:functions} lists the functions. No string about a student appears in storage or in any event.
 
 \begin{table}[!t]
 \caption{Contract functions, who may call them, and their checks.}
@@ -108,8 +108,9 @@ Figure~\ref{fig:arch} shows the architecture. Three programs run locally. A Hard
 \toprule
 function & caller & checks and effect\\
 \midrule
-\texttt{registerInstitution} & admin & non-zero address never registered before, name and domain not empty\\
-\texttt{revokeInstitution} & admin & must be active; sets a cutoff $\le$ now; credentials issued before it stay valid\\
+\texttt{proposeRegister} & admin & non-zero address never registered before, name and domain not empty; counts as one approval\\
+\texttt{proposeDeregister} & admin & must be active; cutoff $\le$ now; credentials issued before it stay valid\\
+\texttt{approve} & another admin & executes the proposal at 2 of 3 approvals, re-checking its conditions\\
 \texttt{issueCredential} & registered & sender registered, commitment non-zero and new; stores issuer, time\\
 \texttt{verifyCredential} & anyone (view) & valid = exists, not revoked, issued while the issuer was authorized\\
 \texttt{revokeCredential} & original issuer & still registered; exists, not yet revoked\\
@@ -196,7 +197,7 @@ B, grouped & 358 & 139.7 & 1 & $7.2\times$\\
 \textbf{What these show.} Grouping saves about $7$--$8\times$ on this machine (a third comparison run in the web app gave $8.7\times$). In a 30-row batch with 3 repeated students, the 27 valid rows were confirmed in one block and the 3 repeats were aborted before sending, in 279\,ms. The figures come from single runs on one machine and vary between runs. On a public chain the network decides block packing, so the shape, not these numbers, carries over.
 
 \subsection{Gas}
-Table~\ref{tab:gas} gives gas used from transaction receipts. Replacing an array of every commitment, kept only for its length, by a counter removed one storage write per issue (about 22{,}000 gas); making the registry reference \texttt{immutable} saved about 2{,}100 more. Deregistration support made \texttt{registerInstitution} and \texttt{revokeCredential} slightly more expensive.
+Table~\ref{tab:gas} gives gas used from transaction receipts. Replacing an array of every commitment, kept only for its length, by a counter removed one storage write per issue (about 22{,}000 gas); making the registry reference \texttt{immutable} saved about 2{,}100 more. Deregistration support made \texttt{revokeCredential} slightly more expensive, and multi-admin approval splits each registry change into a proposal and an approval: storing the proposal's strings makes registration cost about 343{,}000 gas in total instead of 164{,}000.
 
 \begin{table}[!t]
 \caption{Gas used, from receipts on the local node.}
@@ -210,20 +211,22 @@ transaction & gas\\
 \texttt{issueCredential} (final) & 58{,}680\\
 \texttt{issueCredential}, first on a fresh contract & 75{,}780\\
 \texttt{storeMerkleRoot} (3 rows) & 98{,}515\\
-\texttt{registerInstitution} & 164{,}339\\
-\texttt{revokeInstitution} (deregister) & 31{,}913\\
+\texttt{proposeRegister} (later proposals) & 154{,}173\\
+\texttt{approve}, executing a registration & 188{,}932\\
+\texttt{proposeDeregister} & 112{,}352\\
+\texttt{approve}, executing a deregistration & 68{,}230\\
 \texttt{revokeCredential} & 35{,}543\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Correctness and end-to-end checks}
-Automated tests: 24 contract tests (Mocha and Chai, run by \texttt{npm test}) cover access control, the forgery rejection, duplicate rejection, revocation rules, input validation, the deregistration cutoff, the batch limits, that \texttt{CredentialIssued} has three inputs and none is a string, and the commitment test vector. Thirteen batch-service tests (\texttt{node:test}) cover grouping of duplicates, Merkle proofs for every leaf of trees with 1, 2, 3, 5, 6 and 7 leaves, root change on a changed leaf, timing fields, an unknown mode, the pipe character, the row limit, the token check and a foreign browser origin. All pass.
+Automated tests: 31 contract tests (Mocha and Chai, run by \texttt{npm test}) cover access control, the forgery rejection, duplicate rejection, revocation rules, input validation, the deregistration cutoff, two-of-three admin approval (a proposal does nothing until the second approval, double approvals and stale proposals revert), the batch limits, that \texttt{CredentialIssued} has three inputs and none is a string, and the commitment test vector. Thirteen batch-service tests (\texttt{node:test}) cover grouping of duplicates, Merkle proofs for every leaf of trees with 1, 2, 3, 5, 6 and 7 leaves, root change on a changed leaf, timing fields, an unknown mode, the pipe character, the row limit, the token check and a foreign browser origin. All pass.
 
-Table~\ref{tab:manual} lists the manual checks run with the real MetaMask extension against a fresh deployment, every transaction on chain 31337. They were run before the final audit fixes; the changed contract rules are covered by the automated tests.
+Table~\ref{tab:manual} lists the manual checks run with the real MetaMask extension against a fresh deployment, every transaction on chain 31337. They were run before the final audit fixes and the switch to two-of-three admin approval (registration is now a proposal by \#0 and an approval by \#3); the changed rules are covered by the automated tests and were checked live with scripted wallets.
 
 \begin{table}[!t]
-\caption{Manual checks with MetaMask (account \#0 admin, \#1 Demo University, \#2 unregistered). All passed.}
+\caption{Manual checks with MetaMask (account \#0 admin, \#1 Demo University, \#2 unregistered), run before the switch to two-of-three approval. All passed.}
 \label{tab:manual}
 \centering\footnotesize
 \begin{tabular}{@{}L{3.3cm}L{0.8cm}L{3.75cm}@{}}
@@ -308,7 +311,8 @@ Edited credential file & commitment recomputed before any chain call & done\\
 Unauthorized revocation & only the stored issuer & done\\
 Duplicate commitment & rejected by the contract & done\\
 Duplicate student across batches & not detectable on chain & limitation\\
-Admin key compromise & single admin key, no multisig & limitation\\
+One admin key compromised & 2-of-3 admin approval for every registry change & done\\
+Admin set itself & fixed at deployment, no rotation & limitation\\
 Another institution squatting a commitment & credentials keyed by commitment only & limitation\\
 Private key in browser & batch key held server-side & done (local)\\
 \bottomrule
@@ -318,9 +322,9 @@ Private key in browser & batch key held server-side & done (local)\\
 \section{Conclusions and Limitations}
 ScholarLedger shows that a credential DApp can close the Block.co forgery attack at the contract level, keep every student detail off a public chain, and issue large batches several times faster by grouping conflict-free rows and confirming each group in one block. The forgery is rejected by the network itself, verification is free and needs no wallet, and every outcome is visible in the web app and covered by automated or manual tests.
 
-\textbf{Limitations.} (1) The speedup is measured on a local Hardhat node where we control block production; it comes from pipelining submissions, not from parallel execution inside the EVM, and the numbers are from single runs on one laptop. (2) The admin is one key, and vetting institutions remains a trust decision. (3) The contract cannot detect the same student issued twice with different salts; the service only dedupes within a batch. (4) A credential file reveals all of its fields; there is no selective disclosure. (5) The batch service signs with a key held by the server; binding it to the loopback interface makes it acceptable for a local demonstration only, and institution-signed batches are the real fix. (6) Credentials are keyed by commitment alone, so a registered institution that front-runs another's commitment becomes its recorded issuer. (7) The Merkle tree duplicates the last node of odd levels and does not separate leaf and node hashes; the verifier also requires the leaf to exist as a credential. (8) We have not deployed to a public testnet or measured low-power hardware, and the local chain is in memory, so it is wiped on restart.
+\textbf{Limitations.} (1) The speedup is measured on a local Hardhat node where we control block production; it comes from pipelining submissions, not from parallel execution inside the EVM, and the numbers are from single runs on one laptop. (2) The three admins are fixed at deployment and cannot be rotated, and vetting institutions remains a trust decision. (3) The contract cannot detect the same student issued twice with different salts; the service only dedupes within a batch. (4) A credential file reveals all of its fields; there is no selective disclosure. (5) The batch service signs with a key held by the server; binding it to the loopback interface makes it acceptable for a local demonstration only, and institution-signed batches are the real fix. (6) Credentials are keyed by commitment alone, so a registered institution that front-runs another's commitment becomes its recorded issuer. (7) The Merkle tree duplicates the last node of odd levels and does not separate leaf and node hashes; the verifier also requires the leaf to exist as a credential. (8) We have not deployed to a public testnet or measured low-power hardware, and the local chain is in memory, so it is wiped on restart.
 
-\textbf{Future work.} Deploy to the Sepolia testnet and measure real gas and latency; replace the admin with a multisig or a consortium of accreditation bodies; add zero-knowledge selective disclosure following Saramago et al.; detect cross-batch duplicates with an issuer-keyed tag; let institutions sign batches with their own wallets (an EIP-712 signature over the Merkle root, checked with \texttt{ecrecover}); key credentials by issuer and commitment; and compare with Block-STM-style parallel execution inside the node.
+\textbf{Future work.} Deploy to the Sepolia testnet and measure real gas and latency; let the admin set change by a vote of the admins and run it as a consortium of real accreditation bodies; add zero-knowledge selective disclosure following Saramago et al.; detect cross-batch duplicates with an issuer-keyed tag; let institutions sign batches with their own wallets (an EIP-712 signature over the Merkle root, checked with \texttt{ecrecover}); key credentials by issuer and commitment; and compare with Block-STM-style parallel execution inside the node.
 
 \begin{thebibliography}{99}\footnotesize
 \bibitem{zonneveld2026} Zonneveld, G., Rafaiani, G. and Baldi, M., 2026. A forgery attack on the Block.co blockchain-based digital credential certification system. \textit{arXiv:2606.31462}.

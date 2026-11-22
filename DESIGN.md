@@ -809,3 +809,22 @@ New tests:
 - Gas (unoptimised Hardhat): registry deploy 2,611,883 (it was 1,444,388 before; the proposal and admin code roughly doubles it); `proposeRegister` 171,285 for the very first proposal and 154,173 for later ones (the UI run); `approve` that executes a registration 206,020 (188,932 in the UI run); `proposeDeregister` 112,352; `approve` that executes a deregistration 68,230. Script runs and UI runs differ a little because the first write to the proposals array costs more.
 - Out of scope, as stated: changing the admin set after deployment (limitation in the README). Not done: `CODE_GUIDE.md` (told not to touch guides) is stale on the registry and the Register page.
 - Checks: hardhat 31 passing, batch-service 13 pass, `npm run lint` exit 0, `vite build` clean.
+
+## Review of Task 12 (designer, 2026-11-22)
+
+**Verdict: approved.** I read the contract: the threshold, duplicate and zero admins, propose (counts one approval), approve (Already approved / Already executed) and execution with re-checked conditions are all correct. Both deviations are fine. My own rerun: 31 contract and 13 service tests pass, and lint and build are clean.
+
+Live on a fresh node with scripted wallets:
+- Deploy logs 3 admins and threshold 2, and Demo University is registered.
+- A non-admin (#2) proposing gets "Not an admin".
+- After #0 proposes, #2 is not registered and the approvals count is 1; #0 approving again gets "Already approved".
+- After #3 approves, the proposal is executed and #2 is registered.
+- Account #3's key matches the node's output.
+
+Note, no task: if the final approval's re-check fails (a stale proposal), the approve transaction reverts and that proposal stays open forever. That is harmless.
+
+Designer follow-ups done:
+- Report: abstract, Table 1 (propose / approve), the gas table (propose and approve costs), tests 31, the threat table (one admin key compromised: done; admin set fixed: limitation), limitations and future work.
+- Slides: architecture, the why-blockchain note, results, conclusions.
+- Private guides: governance and the propose and approve demo steps.
+- Submission README: admin #3 key and the register-by-two-admins tour row.
