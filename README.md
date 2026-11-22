@@ -12,7 +12,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 **ScholarLedger** closes this gap with two core innovations:
 
 1. **Identity-Bound Issuance** — An on-chain `InstitutionRegistry` whitelists verified university addresses. The `CredentialManager` contract enforces that **only registered institutions** can issue credentials.
-2. **Optimistic Concurrency Control (OCC) Batch Engine** — An off-chain Node.js service inspired by optimistic concurrency control (Block-STM, Gelashvili et al., PPoPP 2023): group, validate, then commit or abort. It detects conflicts among credential rows and submits non-conflicting ones back to back without waiting for each other. It does not parallelise the EVM.
+2. **Optimistic Concurrency Control (OCC) Batch Engine** — An off-chain Node.js service inspired by optimistic concurrency control (Block-STM, R. Gelashvili et al., PPoPP 2023): group, validate, then commit or abort. It detects conflicts among credential rows and submits non-conflicting ones back to back without waiting for each other. It does not parallelise the EVM.
 
 ---
 
@@ -39,7 +39,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 │    3000)          │     │   3001)            │     │   port 8545)     │
 └──────────────────┘     └───────────────────┘     └──────────────────┘
         │                         │                         │
-   ethers.js v6              ethers.js v6            Solidity ^0.8.20
+   ethers.js v6              ethers.js v6            Solidity 0.8.20   
    MetaMask wallet           OCC Engine              InstitutionRegistry
    SHA-256 (WebCrypto)       Merkle Tree (crypto)    CredentialManager
 ```
@@ -50,7 +50,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 
 | Layer | Technology |
 |-------|-----------|
-| Smart Contracts | Solidity `^0.8.20` |
+| Smart Contracts | Solidity `0.8.20` |
 | Local Blockchain | Hardhat (Ethereum dev node) |
 | Batch Engine | Node.js, Express, native `crypto` module |
 | Frontend | React 18 + Vite (Plain CSS, no frameworks) |
@@ -62,7 +62,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 ## 🚀 Quick Start
 
 ### Prerequisites
-- **Node.js** v18+
+- **Node.js** v20.12+
 - **MetaMask** browser extension
 
 ### Terminal 1 — Start Local Blockchain
@@ -86,7 +86,7 @@ npm install
 npm test      # engine and Merkle tests
 node server.js
 ```
-The service signs with `ISSUER_PRIVATE_KEY` (the Hardhat Account #1 fallback is used only on the local Hardhat chain, 31337) and reads the chain at `RPC_URL` (default `http://127.0.0.1:8545`). The key never travels over HTTP. The service listens on `127.0.0.1` only (`HOST` to change it), accepts browser requests only from `ALLOWED_ORIGINS` (default `http://localhost:3000`), and if `BATCH_API_TOKEN` is set, requires `Authorization: Bearer <token>` on `POST /api/batch/*` (the frontend sends it when `VITE_BATCH_API_TOKEN` is set). A request takes at most 1000 rows; credential files are also saved to `batch-service/out/` before the Merkle root is anchored.
+The service signs with `ISSUER_PRIVATE_KEY` (the Hardhat Account #1 fallback is used only on the local Hardhat chain, 31337) and reads the chain at `RPC_URL` (default `http://127.0.0.1:8545`). The key never travels over HTTP. The service listens on `127.0.0.1` only (`HOST` to change it), accepts browser requests only from `ALLOWED_ORIGINS` (default `http://localhost:3000`), and requires `Authorization: Bearer <token>` on every `/api/batch/*` request (`/api/health` stays open). The deploy script creates a fresh random token on every deploy and writes it to `batch-service/.env` (`BATCH_API_TOKEN`) and `frontend/.env.local` (`VITE_BATCH_API_TOKEN`); both files are git-ignored. The service refuses to start without a token ("BATCH_API_TOKEN missing: run the deploy script first") and rejects requests whose `Host` header is not `localhost:<port>` or `127.0.0.1:<port>`. If the node is down, `/api/batch/issue` answers 503. Start order: node, deploy, batch service, frontend. Restart the batch service and the frontend after a redeploy so they pick up the new token. A request takes at most 1000 rows; credential files are also saved to `batch-service/out/` before the Merkle root is anchored.
 
 ### Terminal 4 — Start Frontend
 ```bash
@@ -158,7 +158,7 @@ ScholarLedger/
 2. **Commit:** Each row gets its own random salt and a SHA-256 commitment of `salt|studentId|programName|metadata`.
 3. **Conflict Detection:** Because salts make every commitment unique, rows conflict when they share the same `studentId|programName` key.
 4. **Graph Coloring:** Non-conflicting rows are grouped greedily. Rows in a group do not conflict, so they are submitted together.
-5. **Validate and send:** Groups run in order. Rows in a group do not wait for each other: they are submitted back to back with service-assigned nonces and confirmed together (a local Hardhat node mines one transaction per block, so throughput is bounded). A row whose key was already committed in this request aborts without being sent ("Duplicate of an earlier row in this batch").
+5. **Validate and send:** Groups run in order. Rows in a group do not wait for each other: they are submitted back to back with service-assigned nonces and confirmed together (on the local Hardhat chain the service mines one block per group, so a whole group lands in one block). A row whose key was already committed in this request aborts without being sent ("Duplicate of an earlier row in this batch").
 6. **Merkle Root:** A Merkle tree over the successful commitments is built and stored on-chain via `storeMerkleRoot()` (root, issuer, count, time). Each returned credential file carries its Merkle proof.
 
 ### Measured on this machine
@@ -189,6 +189,11 @@ Adding or removing an institution is a proposal that needs approval from 2 of th
 - The chain is an in-memory Hardhat node; nothing here is deployed to a public network.
 - Duplicates across batches are not detected: the contract only sees salted commitments, so issuers dedupe off-chain.
 - The Merkle tree duplicates the last node on odd levels and has no domain separation between leaves and inner nodes.
+- A deregistered university's credentials can no longer be revoked by anyone.
+- Proposals do not expire and cannot be cancelled.
+- Two addresses may register the same name and domain.
+- The batch service can leave a nonce gap if a send fails before reaching the node.
+- The Ledger, Home and Register pages read every event from block 0.
 
 ---
 
@@ -196,7 +201,7 @@ Adding or removing an institution is a proposal that needs approval from 2 of th
 
 1. G. Zonneveld, G. Rafaiani, M. Baldi, *"A Forgery Attack on the Block.co Blockchain-Based Digital Credential Certification System,"* arXiv:2606.31462, 2026.
 2. R. Q. Saramago, H. Meling, L. N. Jehl, *"A Privacy-Preserving and Transparent Certification System for Digital Credentials,"* OPODIS 2022 (proceedings published 2023).
-3. A. Gelashvili et al., *"Block-STM: Scaling Blockchain Execution by Turning Ordering Curse to a Performance Blessing,"* PPoPP 2023.
+3. R. Gelashvili et al., *"Block-STM: Scaling Blockchain Execution by Turning Ordering Curse to a Performance Blessing,"* PPoPP 2023.
 4. G. Fernández-Blanco et al., *"A Blockchain Based System for Preventing Academic Forgery: Design and Practical Evaluation for CPU-Based and Low-Power Computers,"* IEEE BCCA 2024.
 5. P. S. Anjana, S. Kumari, S. Peri, S. Rathor, A. Somani, *"An Efficient Framework for Optimistic Concurrent Execution of Smart Contracts,"* PDP 2019.
 

@@ -128,16 +128,18 @@ contract InstitutionRegistry {
     function _checkDeregister(address addr, uint64 validUntil) internal view {
         require(institutions[addr].isActive, "Not registered");
         require(validUntil <= block.timestamp, "validUntil in the future");
+        // A cutoff of 0 would otherwise void the whole history of the institution.
+        require(validUntil >= institutions[addr].registeredAt, "Cutoff before registration");
     }
 
     function isRegistered(address addr) external view returns (bool) {
         return institutions[addr].isActive;
     }
 
-    /// @notice Was `issuer` allowed to issue at time `issuedAt`?
+    /// @notice Was `issuer` allowed to issue at time `issuedAt`? A credential issued at or before the cutoff stays valid.
     function issuedWhileAuthorized(address issuer, uint256 issuedAt) external view returns (bool) {
         Institution storage inst = institutions[issuer];
-        return inst.isActive || issuedAt < inst.validUntil;
+        return inst.isActive || issuedAt <= inst.validUntil;
     }
 
     function getAdmins() external view returns (address[] memory) {

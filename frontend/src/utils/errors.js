@@ -23,6 +23,7 @@ const MAP = [
 export function errorKind(err) {
   const raw = [err?.reason, err?.shortMessage, err?.info?.error?.message, err?.message].filter(Boolean).join(' | ');
   if (/user rejected|ACTION_REJECTED|denied transaction/i.test(raw)) return 'rejected';
+  if (/Your wallet is on chain/i.test(raw)) return 'network';
   if (/could not detect network|ECONNREFUSED|Failed to fetch|NETWORK_ERROR|MetaMask not found/i.test(raw)) return 'offline';
   return 'revert';
 }

@@ -71,6 +71,14 @@ async function main() {
     console.log(`Registered Demo University issuer: ${issuer.address}`);
   }
 
+  // Fresh API token on every deploy: the batch service requires it and the frontend sends it (both files are git-ignored).
+  const token = require("crypto").randomBytes(32).toString("hex");
+  fs.writeFileSync(path.join(__dirname, "..", "batch-service", ".env"), `BATCH_API_TOKEN=${token}
+`);
+  fs.writeFileSync(path.join(__dirname, "..", "frontend", ".env.local"), `VITE_BATCH_API_TOKEN=${token}
+`);
+  console.log("Wrote batch-service/.env and frontend/.env.local (restart the batch service and the frontend)");
+
   console.log("Deployment and ABI extraction complete!");
 }
 

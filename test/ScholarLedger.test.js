@@ -147,6 +147,18 @@ describe("ScholarLedger Contracts", function () {
       expect((await manager2.verifyCredential(early))[0]).to.be.true;
     });
 
+    it("A credential issued in the same second as the cutoff stays valid; a zero cutoff is rejected", async function () {
+      await register(institution1.address, "State University", "state.edu");
+      const mgr = await (await ethers.getContractFactory("CredentialManager")).deploy(await registry.getAddress());
+      const c = ethers.keccak256(ethers.toUtf8Bytes("same-second"));
+      await mgr.connect(institution1).issueCredential(c);
+      const issuedAt = (await mgr.credentials(c)).issuedAt;
+      await expect(registry.connect(admin).proposeDeregister(institution1.address, 0)).to.be.revertedWith("Cutoff before registration");
+      await deregister(institution1.address, issuedAt); // cutoff == issuedAt: issued "at or before" the cutoff
+      expect((await mgr.verifyCredential(c))[0]).to.be.true;
+      expect(await registry.issuedWhileAuthorized(institution1.address, issuedAt + 1n)).to.be.false;
+    });
+
     it("With threshold 1 a proposal executes immediately", async function () {
       const solo = await deployRegistry([admin.address], 1);
       await solo.connect(admin).proposeRegister(institution1.address, "Solo U", "solo.edu");

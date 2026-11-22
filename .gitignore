@@ -7,3 +7,4 @@ batch-service/node_modules/
 .env
 git_setup.ps1
 batch-service/out/
+*.local

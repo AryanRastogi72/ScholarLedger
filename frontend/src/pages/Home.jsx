@@ -14,13 +14,14 @@ function useChainStats() {
         const provider = getReadProvider();
         const registry = await getRegistryContract(provider);
         const manager = await getCredentialManagerContract(provider);
-        const [inst, creds, batches, revoked] = await Promise.all([
+        const [inst, deregistered, creds, batches, revoked] = await Promise.all([
           registry.queryFilter(registry.filters.InstitutionRegistered()),
+          registry.queryFilter(registry.filters.InstitutionRevoked()),
           manager.getCredentialCount(),
           manager.getBatchCount(),
           manager.queryFilter(manager.filters.CredentialRevoked())
         ]);
-        setStats({ institutions: inst.length, credentials: Number(creds), batches: Number(batches), revoked: revoked.length });
+        setStats({ institutions: inst.length - deregistered.length, credentials: Number(creds), batches: Number(batches), revoked: revoked.length });
       } catch {
         setOffline(true);
       }
@@ -32,7 +33,7 @@ function useChainStats() {
 const PAPERS = [
   'Zonneveld, Rafaiani, Baldi. A Forgery Attack on the Block.co Blockchain-Based Digital Credential Certification System (2026). The attack this project closes.',
   'Saramago, Meling, Jehl. A Privacy-Preserving and Transparent Certification System for Digital Credentials (OPODIS 2022). Source of the commitment idea.',
-  'Gelashvili et al. Block-STM: Scaling Blockchain Execution by Turning Ordering Curse to a Performance Blessing (PPoPP 2023). Model for the batch engine.',
+  'R. Gelashvili et al. Block-STM: Scaling Blockchain Execution by Turning Ordering Curse to a Performance Blessing (PPoPP 2023). Model for the batch engine.',
   'Fernandez-Blanco et al. A Blockchain Based System for Preventing Academic Forgery: Design and Practical Evaluation for CPU-Based and Low-Power Computers (IEEE BCCA 2024). Template for the evaluation.'
 ];
 
@@ -50,7 +51,7 @@ const SPECIMEN = {
 function Home() {
   const { stats, offline } = useChainStats();
   const cells = [
-    ['Institutions', stats?.institutions],
+    ['Active institutions', stats?.institutions],
     ['Credentials', stats?.credentials],
     ['Batches', stats?.batches],
     ['Revoked', stats?.revoked]
@@ -122,7 +123,7 @@ function Home() {
           <p>
             A graduation day means a long list of credentials, up to 1,000 rows per request. The batch service finds rows that clash, such as the same student
             and program twice, places them in different groups, and submits the rows of a group back to back without waiting
-            for each other. Conflicting rows wait for the next group and are re-checked first. Then it anchors one Merkle root
+            for each other. Conflicting rows wait for a later group; before one is sent, it is checked against the rows already issued and aborted if it is a duplicate. Then it anchors one Merkle root
             for everything that succeeded. This follows the optimistic concurrency idea from Block-STM.
           </p>
           <p><Link to="/batch">Open batch issue</Link></p>

@@ -85,7 +85,7 @@ function BatchIssue() {
         Issue many credentials at once. The service signs with the demo issuer key, so no wallet is needed here.
       </PageHeader>
       <p>
-        Rows for the same student and program conflict, so they go into different groups. Rows in a group do not wait for each other: they are submitted back to back and confirmed together. Conflicting rows wait for the next group and are re-checked first. Then one Merkle root for the batch is anchored on the chain. This is the optimistic concurrency idea from Block-STM.
+        Rows for the same student and program conflict, so they go into different groups. Rows in a group do not wait for each other: they are submitted back to back and confirmed together. Conflicting rows wait for a later group; before one is sent, it is checked against the rows already issued and aborted if it is a duplicate. Then one Merkle root for the batch is anchored on the chain. This is the optimistic concurrency idea from Block-STM.
       </p>
 
       <section className="panel stack" aria-labelledby="rows-h">

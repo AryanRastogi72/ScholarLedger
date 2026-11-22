@@ -15,7 +15,8 @@ const STEP_MS = 350; // pacing only; the right-hand outcome waits for the real t
 const OUTCOME = {
   revert: (m) => <><strong>Refused by the contract:</strong> {m}</>,
   rejected: () => <strong>You cancelled in the wallet.</strong>,
-  offline: () => <strong>Cannot reach the node.</strong>
+  offline: () => <strong>Cannot reach the node.</strong>,
+  network: (m) => <><strong>Wrong network.</strong> {m}</>
 };
 
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;

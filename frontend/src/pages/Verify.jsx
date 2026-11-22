@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CircleNotch } from '@phosphor-icons/react';
-import { getReadProvider, getCredentialManagerContract, getRegistryContract } from '../utils/contracts';
+import { getReadProvider, getCredentialManagerContract, getRegistryContract, SITE_CHAIN_ID, MANAGER_ADDRESS } from '../utils/contracts';
 import { parseCredentialFile, verifyMerkleProof } from '../utils/credential';
 import { friendlyError } from '../utils/errors';
 import { useReveal } from '../utils/useReveal';
@@ -11,11 +11,14 @@ import StatusPanel from '../components/StatusPanel';
 import CertificateCard from '../components/CertificateCard';
 import HashText from '../components/HashText';
 
+const same = (a, b) => a?.toLowerCase() === b?.toLowerCase();
+
 function Verify() {
   const [hash, setHash] = useState('');
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [files, setFiles] = useState(null); // a "Download all" array waiting for the user to pick one
   const revealRef = useReveal(result ?? error);
   const [params] = useSearchParams();
 
@@ -25,6 +28,10 @@ function Verify() {
     setError('');
     setResult(null);
     try {
+      if (file && ((file.chainId != null && Number(file.chainId) !== SITE_CHAIN_ID) || (file.contract && !same(file.contract, MANAGER_ADDRESS)))) {
+        setError(`This file was issued on chain ${file.chainId}, contract ${file.contract}. This site checks chain ${SITE_CHAIN_ID}, contract ${MANAGER_ADDRESS}.`);
+        return;
+      }
       const provider = getReadProvider();
       const manager = await getCredentialManagerContract(provider);
       const registry = await getRegistryContract(provider);
@@ -40,6 +47,7 @@ function Verify() {
       };
       if (file) {
         res.fields = file;
+        if (file.issuer && !same(file.issuer, issuer)) res.issuerMismatch = file.issuer;
         if (file.batch) {
           try {
             const b = await manager.batches(file.batch.batchId);
@@ -66,10 +74,7 @@ function Verify() {
     }
   }, [prefill]);
 
-  const onFile = async (f) => {
-    setResult(null);
-    setError('');
-    const text = await f.text();
+  const checkText = async (text) => {
     try {
       const cred = await parseCredentialFile(text);
       await lookup(cred.commitment, cred);
@@ -78,6 +83,21 @@ function Verify() {
       if (/altered/.test(err.message)) setResult({ kind: 'ALTERED', claimed: JSON.parse(text) });
       else setError(err.message);
     }
+  };
+
+  const onFile = async (f) => {
+    setResult(null);
+    setError('');
+    setFiles(null);
+    const text = await f.text();
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { /* checkText reports invalid JSON */ }
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) setError('This file holds no credentials.');
+      else setFiles(parsed);
+      return;
+    }
+    await checkText(text);
   };
 
   const onPaste = (e) => {
@@ -98,6 +118,15 @@ function Verify() {
       <div className="split">
         <div className="stack">
           <FileDrop onFile={onFile} accept=".json,application/json" title="Upload credential file" hint="Drop a .json file here, or press to choose one" />
+          {files && (
+            <div className="panel field">
+              <label htmlFor="pick">This file holds {files.length} credentials: pick one</label>
+              <select id="pick" defaultValue="" onChange={(e) => { setResult(null); setError(''); checkText(JSON.stringify(files[Number(e.target.value)])); }}>
+                <option value="" disabled>Choose a credential</option>
+                {files.map((f, i) => <option key={i} value={i}>{f.studentId} · {f.programName}</option>)}
+              </select>
+            </div>
+          )}
           <form onSubmit={onPaste} className="panel" noValidate>
             <div className="field">
               <label htmlFor="paste">Or paste a commitment</label>
@@ -122,6 +151,9 @@ function Verify() {
                     <dd>{result.batchOk ? 'Checks out against the stored Merkle root.' : 'Warning: the batch proof does not check out.'}</dd>
                   </>}
                 </dl>
+              )}
+              {result.issuerMismatch && (
+                <p className="tx-status error mt" role="alert"><span>The file names a different issuer ({result.issuerMismatch}) than the ledger ({result.issuer}). Trust the ledger.</span></p>
               )}
               {result.institution && <p className="mt"><Link to="/explorer">See it on the ledger</Link></p>}
             </StatusPanel>

@@ -7,17 +7,31 @@ const path = require('path');
 const { buildMerkleTree } = require('./merkle');
 const { newSalt, computeCommitment } = require('./credential');
 const { analyzeBatch, executeBatch } = require('./occEngine');
+const { shortError } = require('./shortError');
+
+// The deploy script writes batch-service/.env with a fresh BATCH_API_TOKEN.
+try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env: the token may come from the environment */ }
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST ?? '127.0.0.1'; // loopback only: this service holds the issuer key
-const TOKEN = process.env.BATCH_API_TOKEN; // optional bearer token for POST /api/batch/*
+const TOKEN = process.env.BATCH_API_TOKEN;
+if (!TOKEN) {
+  console.error('BATCH_API_TOKEN missing: run the deploy script first');
+  process.exit(1);
+}
 const MAX_ROWS = 1000;
+const ALLOWED_HOSTS = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
 
+// DNS-rebinding guard: a page on another domain that resolves to 127.0.0.1 still sends its own Host header.
+app.use((req, res, next) => {
+  if (!ALLOWED_HOSTS.includes(req.headers.host)) return res.status(403).json({ error: 'Host not allowed' });
+  next();
+});
 app.use(cors({ origin: (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000').split(',') }));
 app.use(express.json({ limit: '2mb' }));
 app.use('/api/batch', (req, res, next) => {
-  if (TOKEN && req.get('Authorization') !== `Bearer ${TOKEN}`) return res.status(401).json({ error: 'Missing or wrong API token' });
+  if (req.get('Authorization') !== `Bearer ${TOKEN}`) return res.status(401).json({ error: 'Missing or wrong API token' });
   next();
 });
 
@@ -68,8 +82,21 @@ const withCommitment = (transactions) => transactions.map(tx => {
 });
 
 // Routes
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+// eth_chainId over plain fetch with a short timeout, so a dead node fails fast instead of hanging ethers.
+async function chainIdOrNull() {
+  try {
+    const r = await fetch(RPC_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }), signal: AbortSignal.timeout(3000)
+    });
+    return BigInt((await r.json()).result);
+  } catch {
+    return null;
+  }
+}
+
+app.get('/api/health', async (req, res) => {
+  res.json({ status: 'ok', node: (await chainIdOrNull()) === null ? 'down' : 'up' });
 });
 
 app.post('/api/batch/analyze', (req, res, next) => {
@@ -87,12 +114,6 @@ app.post('/api/batch/analyze', (req, res, next) => {
 function saveFiles(name, files) {
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, name), JSON.stringify(files, null, 2));
-}
-
-// Short message for the client; the raw error is logged on the server.
-function shortError(e) {
-  console.error('Batch error:', e);
-  return e.shortMessage ?? e.reason ?? (e.code === 'TIMEOUT' ? 'Timed out waiting for confirmation' : 'Transaction failed');
 }
 
 async function issueBatch(req, res, next) {
@@ -114,8 +135,9 @@ async function issueBatch(req, res, next) {
     const rows = withCommitment(transactions).map((r, idx) => ({ ...r, idx }));
     const analysis = analyzeBatch(rows, conflictKey);
 
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    const { chainId } = await provider.getNetwork();
+    const chainId = await chainIdOrNull();
+    if (chainId === null) return res.status(503).json({ error: `Cannot reach the blockchain node at ${RPC_URL}` });
+    const provider = new ethers.JsonRpcProvider(RPC_URL, Number(chainId), { staticNetwork: true }); // no network re-detection
     const key = process.env.ISSUER_PRIVATE_KEY ?? (chainId === 31337n ? HARDHAT_ACCOUNT_1_KEY : null);
     if (!key) return res.status(500).json({ error: 'ISSUER_PRIVATE_KEY is required outside the local Hardhat chain' });
     if (await provider.getCode(managerAddress) === '0x') {
@@ -126,7 +148,7 @@ async function issueBatch(req, res, next) {
 
     // Local dev node only: mine one block per group so the group's parallelism is visible on chain.
     const blockPerGroup = mode === 'grouped' && chainId === 31337n;
-    const GAS = 200_000; // issue costs about 61k; a low limit keeps a whole group inside one block
+    const GAS = 200_000; // issue costs about 58.7k; a low limit keeps a whole group inside one block
 
     // Fee data fetched once and passed explicitly, so each send is just sign + submit (no per-tx RPC lookups)
     const fees = await provider.getFeeData();

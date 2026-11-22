@@ -828,3 +828,133 @@ Designer follow-ups done:
 - Slides: architecture, the why-blockchain note, results, conclusions.
 - Private guides: governance and the propose and approve demo steps.
 - Submission README: admin #3 key and the register-by-two-admins tour row.
+
+---
+
+## Task 13: Final fixes, then freeze (2026-11-22)
+
+Status: done
+
+**Why:** a second outside review found real bugs (one is a regression from Task 11) and wrong docs. This is the **last** change task before the presentation. Fix exactly the items below. Everything else from that review stays a documented limitation; do not fix it.
+
+**Rules:** `git pull` first. No `Co-Authored-By` or "Generated with" lines. Don't touch the report, slides or study guides (designer). Commit locally as `task 13: final fixes` and **don't push**.
+
+### A. Batch service (`batch-service/server.js`, tests)
+
+1. **Duplicate-message regression (urgent).** `shortError()` (line ~93) turns the plain `Error('Duplicate of an earlier row in this batch')` into "Transaction failed", so the timeline never draws the amber aborted bar.
+   - Make plain errors you threw yourself keep their message: errors without an ethers `code`.
+   - Keep ethers errors short as today.
+   - Add a test that a duplicate row's result `error` is exactly "Duplicate of an earlier row in this batch". It can be a pure unit test if you export `shortError`.
+2. **Mandatory token, created by deploy.**
+   - `scripts/deploy.js` generates a random 32-byte hex token on every deploy. It writes `BATCH_API_TOKEN=<t>` to `batch-service/.env` and `VITE_BATCH_API_TOKEN=<t>` to `frontend/.env.local`, both git-ignored.
+   - The service loads `batch-service/.env` with `process.loadEnvFile` (Node ≥ 20.12; README requirement becomes Node 20.12+).
+   - The service **refuses to start** without a token: "BATCH_API_TOKEN missing: run the deploy script first".
+   - Every `/api/batch/*` request needs `Authorization: Bearer <token>`, else 401. `/api/health` stays open.
+   - The frontend already sends the header when the variable is set. Vite reads `.env.local` at start, so the README order (deploy, then service, then frontend) still works. Say in the README: "restart the frontend after a redeploy".
+3. **Reject non-local hosts (DNS-rebinding guard).** A request whose `Host` header is not `localhost:<PORT>` or `127.0.0.1:<PORT>` gets 403 "Host not allowed". Test it.
+4. **Node down.** If the RPC is unreachable, `/api/batch/issue` returns **503** "Cannot reach the blockchain node at <RPC_URL>" instead of "Internal server error". `/api/health` gains `"node": "up" | "down"`.
+5. Comment "about 61k" → "about 58.7k".
+6. `npm audit fix` (no `--force`) in `batch-service/` and `frontend/`. If a fix needs a major upgrade (react-router), don't do it; list it in your notes.
+
+### B. Frontend
+
+1. **Network guard, fixed once in `getSigner()`** (`utils/contracts.js`; every write path calls it).
+   - Read the wallet's chain id. If it isn't `import.meta.env.VITE_CHAIN_ID ?? 31337`, throw a readable error and send nothing: "Your wallet is on chain X. Switch MetaMask to Hardhat Local (31337) and try again."
+   - Map it in `errors.js`. Covers Issue, Revoke, Register (propose and approve) and the forgery demo.
+   - Check that Issue no longer shows "Credential issued" on the wrong chain.
+2. **Verify compares the file with the chain** (`Verify.jsx`):
+   - If the file's `chainId` or `contract` differs from the site's (`31337` / `deployedAddresses.CredentialManager`), show an error and make **no** lookup: "This file was issued on chain X, contract 0x… This site checks chain Y, contract 0x…".
+   - If the file's `issuer` differs from the on-chain issuer (case-insensitive), show the chain result plus a clear warning line: "The file names a different issuer (0x…) than the ledger (0x…). Trust the ledger."
+3. **"Download all" files open on Verify.** `parseCredentialFile` / Verify accept a JSON **array** of credential files and show a `<select>` ("This file holds N credentials: pick one", labelled by student ID and program); the chosen entry is then verified as usual. Single files work as before.
+4. **Home institution count** shows **active** institutions: `InstitutionRegistered` events minus `InstitutionRevoked` events. Label it "Active institutions".
+5. **Wording** (Home ~line 125, Batch page ~line 88): "Conflicting rows wait for the next group and are re-checked first" → "Conflicting rows wait for a later group; before one is sent, it is checked against the rows already issued and aborted if it is a duplicate."
+6. Home reference list: "Gelashvili et al." → "R. Gelashvili et al." if initials are used there; at minimum it must match the README.
+
+### C. Contract (`InstitutionRegistry.sol`)
+
+1. **Same-second cutoff.** `issuedWhileAuthorized`: `issuedAt < validUntil` → `issuedAt <= validUntil` ("issued at or before the cutoff stays valid"). Update the NatSpec and the test.
+2. **No nonsense cutoffs.** `_checkDeregister` adds `require(validUntil >= institutions[addr].registeredAt, "Cutoff before registration")`, so `validUntil = 0` can't void a university's whole history. Add a test.
+
+### D. Repo docs (`README.md`)
+
+- Line ~161 "one transaction per block" → describe the current behaviour (one block per group on the local chain).
+- References: "A. Gelashvili" → "R. Gelashvili".
+- `^0.8.20` (lines ~42, ~53) → `0.8.20`.
+- Node requirement → 20.12+. Token text as in A2.
+- Known limitations: add "a deregistered university's credentials can no longer be revoked by anyone", "proposals don't expire and can't be cancelled", "two addresses may register the same name and domain", "the service can leave a nonce gap if a send fails before reaching the node", "the Ledger, Home and Register pages read every event from block 0".
+
+### Acceptance
+
+1. Root `npm test`, batch-service `npm test`, frontend `npm run lint` and `vite build` all pass.
+2. Fresh node and deploy: `batch-service/.env` and `frontend/.env.local` exist, and `git status` shows neither.
+3. Live:
+   - S1/S2/S1 with the token gives 2 issued + 1 duplicate whose `error` is exactly "Duplicate of an earlier row in this batch".
+   - No token → 401.
+   - `-H "Host: evil.example"` → 403.
+   - Node stopped → 503 with the message.
+4. Append notes and "Status: done" under Task 13; commit locally (no co-author line; don't push).
+5. **Then go straight on to Task 14.**
+
+**Implementor notes (Task 13):** Status: done (local commit `task 13: final fixes`, no trailers, not pushed)
+- A1: `shortError` moved to `batch-service/shortError.js`; errors without a `code` keep their message, ethers errors are shortened and logged. Unit test plus the live run: the duplicate row's `error` is exactly "Duplicate of an earlier row in this batch". A2: deploy writes a fresh 32-byte token to `batch-service/.env` and `frontend/.env.local` (`*.local` added to `.gitignore`; `git status` shows neither); the service loads `.env` with `process.loadEnvFile`, refuses to start without a token ("BATCH_API_TOKEN missing: run the deploy script first"), and every `/api/batch/*` request needs the bearer token (`/api/health` stays open). A3: Host allow-list (`localhost:<PORT>`, `127.0.0.1:<PORT>`) gives 403 "Host not allowed". A4: a fetch-based `eth_chainId` probe with a 3 s timeout gives 503 "Cannot reach the blockchain node at <RPC_URL>" and `/api/health` reports `node: up|down`; the provider now uses `staticNetwork`, so ethers no longer retries network detection forever if the node dies mid-request. A5: comment says about 58.7k.
+- A6 `npm audit fix`: batch-service now 0 vulnerabilities. frontend still has 4 (1 high, 3 moderate), all needing major upgrades, so left alone: vite (high) and esbuild (moderate) via `vite@8`, react-router and react-router-dom (moderate) via `react-router-dom@7`.
+- B1: `getSigner()` checks the wallet chain id against `VITE_CHAIN_ID ?? 31337` and throws "Your wallet is on chain X. Switch MetaMask to Hardhat Local (31337) and try again." before anything is sent; `errorKind` gives it its own `network` kind, so the forgery demo says "Wrong network." instead of "Refused by the contract". Issue shows no certificate when the signer fails. B2: Verify refuses a file whose chain id or contract differs from the site's (no lookup) and shows an issuer-mismatch warning line. B3: a JSON array file shows a picker, then verifies the chosen entry. B4: Home shows "Active institutions" (registered minus deregistered events). B5/B6: wording and the "R. Gelashvili" reference.
+- C1/C2: `issuedWhileAuthorized` uses `<=`; `_checkDeregister` requires `validUntil >= registeredAt` ("Cutoff before registration"); one new test covers the same-second cutoff and the zero cutoff. 32 hardhat tests pass.
+- D: README fixes as listed (block-per-group wording, R. Gelashvili, `0.8.20`, Node 20.12+, token and Host text, restart-after-redeploy note, five new limitations).
+- Live (fresh node and deploy): S1/S2/S1 with token gives 2 issued + 1 duplicate with the exact message; no token 401; `Host: evil.example` 403; node stopped gives 503 with the message and health shows `node: down`.
+- Checks: hardhat 32 passing, batch-service 16 pass, `npm run lint` exit 0, `vite build` clean. Browser behaviour of B1 to B4 is not exercised yet; Task 14 does that.
+
+
+---
+
+## Task 14: Full diagnostic test, top to bottom (good and bad paths)
+
+Status: ready (right after Task 13)
+
+**Goal:** prove the whole system works and fails correctly, layer by layer, and leave the proof re-runnable. Find bugs; **fix only clear bugs** (behaviour that contradicts the spec or README) and list everything else. Don't add features.
+
+**Rules:** as Task 13. Commit locally as `task 14: full diagnostic`; **don't push**. Write the results to `docs/DIAGNOSTIC.md` in the repo: a table per layer with case, expected, observed, PASS/FAIL, plus a summary at the top (counts, bugs found and fixed, open items).
+
+### 1. Static checks
+`npm audit` (all three packages, report counts), frontend lint, Solidity compile warnings.
+
+### 2. Contracts (Hardhat tests; add what's missing)
+Every external function, good path and every `require`:
+- **Registry:** the constructor (threshold, zero and duplicate admin); propose register and deregister, approve, execute, and every revert string ("Not an admin", "Already approved", "Already executed", "No such proposal", "Address was registered before", "Zero address", "Name required", "Domain required", "Not registered", "validUntil in the future", "Cutoff before registration"); `issuedWhileAuthorized` exactly at, before and after the cutoff; getters.
+- **CredentialManager:** issue, verify, revoke and `storeMerkleRoot`, each good path plus every revert ("Issuer not registered", "Credential already exists", "Invalid hash", "Credential does not exist", "Only issuer can revoke", "Already revoked", root and count limits); verify after revoke, after deregistration (before and after the cutoff), and for an unknown hash.
+- Report the statement and branch coverage from `npx hardhat coverage` (install nothing globally; `solidity-coverage` ships with hardhat-toolbox).
+
+### 3. Batch service: a committed end-to-end script `scripts/e2e.js` against a live node
+`node scripts/e2e.js` assumes node, deploy and service are running, and prints a PASS/FAIL line per case. Cases:
+- **Health:** `node: up` / `down`.
+- **Auth:** no token 401; wrong token 401; foreign `Host` 403; foreign `Origin` preflight gets no ACAO.
+- **Validation:** not an array; an empty field; `|`; 1001 rows; bad JSON 400; a 3 MB body 413; an unknown mode 400.
+- **Grouped issue:** S1/S2/S1 gives 2 + 1 with the exact duplicate message; 50 rows land in one block; `batchId` and `merkleRoot` are set; every returned file verifies (recompute the commitment, `verifyCredential` true, Merkle proof against `batches(id)`); an out-file is written.
+- **Sequential mode:** one block per row.
+- **Analyze:** groups and conflicts are correct; no chain writes.
+- **Root failure:** deregister the issuer mid-batch → 200 with files and `rootError`.
+- **Node down mid-request** → 503 or 500 with the files built so far; no hang.
+- **Two concurrent requests** both succeed (the lock).
+- Measure 20 and 50 conflict-free rows, sequential vs grouped, 3 runs each; report the medians and speedups. These numbers replace the docs' figures.
+
+### 4. Frontend, every page in a real browser (headless Chromium with your EIP-1193 stand-in, accounts #0–#5)
+For each route, the good path and every error state:
+- **Home:** stats, the offline state.
+- **Verify:** valid file, altered file, a revoked credential, issuer deregistered (both cutoff cases), not found, a pasted hash, a bad hash format, a wrong-chain file, a wrong-contract file, an issuer-mismatch file, a batch array file with the picker, the batch proof shown.
+- **Issue:** success with a file download, empty fields, `|`, a wrong-chain refusal, a wallet cancel, a non-issuer refused.
+- **Batch:** CSV upload, Analyze, Execute, Compare, the duplicate amber bar visible, Download all then verified, service down, token missing.
+- **Revoke:** by file and by hash, the wrong issuer, already revoked, wrong chain.
+- **Register:** propose, approve by the second admin, a non-admin disabled, double approve, deregister with a cutoff, wrong chain.
+- **Ledger:** three badges, filter, a row click opens Verify, the empty and offline states.
+- **Forgery demo:** an unregistered wallet refused; a registered wallet shows the note; the cancel and node-down wording.
+- **Navbar:** wrong-network chip; keyboard dropdowns.
+- **Phone width:** 375 px with no horizontal scroll on every route.
+
+### 5. Retake every screenshot in `docs/screenshots/` from the final build
+Include the batch timeline showing an amber duplicate, batch-compare, and the Register page with a proposal at 1 / 2. Look at every image before committing.
+
+### 6. Report
+- Commit `docs/DIAGNOSTIC.md`, `scripts/e2e.js`, any new tests, fixes and screenshots.
+- Append notes and "Status: done" under Task 14 (summary counts, fixed bugs, open items, measured speedups).
+- Copy the root `DESIGN.md` over `ScholarLedger/DESIGN.md`.
+- Message the designer. **Don't push.**

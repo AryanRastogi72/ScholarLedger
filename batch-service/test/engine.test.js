@@ -67,7 +67,7 @@ test('every result row has numeric submittedAt <= confirmedAt', async () => {
 async function withServer(port, env, fn) {
   const { spawn } = require('node:child_process');
   const path = require('node:path');
-  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(port), ...env }, stdio: 'pipe' });
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(port), BATCH_API_TOKEN: 'tkn', ...env }, stdio: 'pipe' });
   try {
     await new Promise((res, rej) => { child.stdout.on('data', (d) => /running/.test(String(d)) && res()); child.on('error', rej); setTimeout(() => rej(new Error('server did not start')), 5000); });
     await fn(`http://127.0.0.1:${port}`);
@@ -75,7 +75,7 @@ async function withServer(port, env, fn) {
     child.kill();
   }
 }
-const post = (base, body, headers = {}) => fetch(`${base}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+const post = (base, body, headers = {}) => fetch(`${base}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tkn', ...headers }, body: JSON.stringify(body) });
 const row = { studentId: 'A', programName: 'B' };
 
 test('issue endpoint rejects an unknown mode with 400', () => withServer(3999, {}, async (base) => {
@@ -104,8 +104,8 @@ test('a foreign Origin preflight gets no CORS header; the app origin does', () =
   assert.strictEqual((await pre('http://localhost:3000')).headers.get('access-control-allow-origin'), 'http://localhost:3000');
 }));
 
-test('with BATCH_API_TOKEN set, a missing or wrong token gives 401', () => withServer(3995, { BATCH_API_TOKEN: 's3cret' }, async (base) => {
-  assert.strictEqual((await post(base, { transactions: [row] })).status, 401);
+test('a missing or wrong token gives 401', () => withServer(3995, { BATCH_API_TOKEN: 's3cret' }, async (base) => {
+  assert.strictEqual((await post(base, { transactions: [row] }, { Authorization: '' })).status, 401);
   assert.strictEqual((await post(base, { transactions: [row] }, { Authorization: 'Bearer nope' })).status, 401);
   // right token passes auth (and then fails validation, not authorization)
   assert.strictEqual((await post(base, { transactions: [{ studentId: '', programName: '' }] }, { Authorization: 'Bearer s3cret' })).status, 400);
@@ -123,3 +123,30 @@ test('malformed JSON gives 400 and an oversized body gives 413', () => withServe
   const big = await fetch(`${base}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x: 'a'.repeat(3 * 1024 * 1024) }) });
   assert.strictEqual(big.status, 413);
 }));
+
+test('a foreign Host header gets 403, localhost does not', () => withServer(3993, {}, async (base) => {
+  const http = require('node:http');
+  const get = (host) => new Promise((res, rej) => http.get({ host: '127.0.0.1', port: 3993, path: '/api/health', headers: { Host: host } }, (r) => res(r.statusCode)).on('error', rej));
+  assert.strictEqual(await get('evil.example'), 403);
+  assert.strictEqual(await get('evil.example:3993'), 403);
+  assert.strictEqual(await get('localhost:3993'), 200);
+}));
+
+test('the server refuses to start without BATCH_API_TOKEN', async () => {
+  const { spawnSync } = require('node:child_process');
+  const out = spawnSync(process.execPath, [require('node:path').join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: '3992', BATCH_API_TOKEN: '' }, encoding: 'utf8', timeout: 5000 });
+  assert.strictEqual(out.status, 1);
+  assert.match(out.stderr, /BATCH_API_TOKEN missing: run the deploy script first/);
+});
+
+test('shortError keeps our own messages and shortens ethers errors', () => {
+  const { shortError } = require('../shortError');
+  assert.strictEqual(shortError(new Error('Duplicate of an earlier row in this batch')), 'Duplicate of an earlier row in this batch');
+  const quiet = console.error; console.error = () => {};
+  try {
+    const eth = Object.assign(new Error('could not coalesce error (error={ ...huge... })'), { code: 'UNKNOWN_ERROR', shortMessage: 'could not coalesce error' });
+    assert.strictEqual(shortError(eth), 'could not coalesce error');
+    assert.strictEqual(shortError(Object.assign(new Error('x'), { code: 'TIMEOUT' })), 'Timed out waiting for confirmation');
+    assert.strictEqual(shortError(Object.assign(new Error('x'), { code: 'SOMETHING' })), 'Transaction failed');
+  } finally { console.error = quiet; }
+});
