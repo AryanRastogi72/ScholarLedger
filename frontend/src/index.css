@@ -86,7 +86,7 @@ label, .label { display: block; font-weight: 600; font-size: 0.9375rem; margin-b
 .field { margin-bottom: var(--space-4); }
 .hint { color: var(--muted); font-size: var(--step--1); margin: var(--space-1) 0 0; }
 .field-error { color: var(--danger); font-size: var(--step--1); margin: var(--space-1) 0 0; }
-input[type='text'], input:not([type]), textarea, select {
+input[type='text'], input[type='datetime-local'], input:not([type]), textarea, select {
   width: 100%; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--muted);
   border-radius: var(--radius); padding: var(--space-3); min-height: 44px;
 }
@@ -234,10 +234,10 @@ section[tabindex='-1'] { scroll-margin-top: 5rem; }
   --rot: -9deg; --scale: 1; position: relative; margin: 0; max-width: none;
   padding: 0.15em 0.6em; border: 3px solid currentColor; outline: 1px solid currentColor; outline-offset: 2px; border-radius: 4px;
   font-family: var(--font-ui); font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; font-size: clamp(1rem, 6cqi, 1.6rem);
-  transform: rotate(var(--rot)) scale(var(--scale)); transform-origin: right center; mix-blend-mode: multiply; background: rgb(251 247 236 / 0.55);
+  transform: rotate(var(--rot)) scale(var(--scale)); transform-origin: center; mix-blend-mode: multiply; background: rgb(251 247 236 / 0.55);
 }
 .cert-stamp.valid { color: var(--cert-accent); }
-.cert-stamp.revoked { color: var(--cert-danger); --rot: -14deg; font-size: clamp(1.3rem, 8cqi, 2.2rem); }
+.cert-stamp.revoked { color: var(--cert-danger); --rot: -8deg; font-size: clamp(1.3rem, 8cqi, 2.2rem); }
 .cert-stamp.altered { color: var(--cert-danger); --rot: -5deg; }
 .cert-stamp.warn { color: var(--cert-warn); font-size: clamp(0.8rem, 4.5cqi, 1.2rem); }
 @container (max-width: 420px) { .cert-stamp { --scale: 0.7; } .cert-stampband { min-height: 3.4rem; } }
@@ -355,3 +355,4 @@ tr:hover .copy-icon, tr:focus-within .copy-icon, .copy-icon:focus-visible { opac
 .empty { max-width: none; }
 .speedup-note { flex-basis: 100%; max-width: 60ch; margin: 0; }
 .speedup p.speedup-note { font-size: var(--step--1); color: var(--muted); max-width: 60ch; }
+.cert-stampband:has(.revoked) { min-height: 5.6rem; padding-right: var(--space-4); }

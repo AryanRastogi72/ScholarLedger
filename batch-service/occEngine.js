@@ -119,7 +119,6 @@ async function executeBatch(groups, executorFn) {
 
   const startTime = Date.now();
   const results = [];
-  let totalTxsExecuted = 0;
 
   // 5. Execute each parallel batch concurrently
   // Groups are executed sequentially, but txs within a group execute in parallel
@@ -142,23 +141,10 @@ async function executeBatch(groups, executorFn) {
       })
     );
     results.push(groupResults);
-    totalTxsExecuted += group.length;
   }
 
-  const endTime = Date.now();
-  const totalTimeMs = endTime - startTime;
-  
-  // Throughput (tx/sec)
-  const throughput = totalTimeMs > 0 ? (totalTxsExecuted / (totalTimeMs / 1000)) : totalTxsExecuted * 1000;
-
-  // 6. Return combined results and metrics
-  return {
-    results,
-    metrics: {
-      totalTimeMs,
-      throughputTxPerSec: throughput
-    }
-  };
+  // The caller computes throughput: only rows that were actually submitted count.
+  return { results, metrics: { totalTimeMs: Date.now() - startTime } };
 }
 
 module.exports = { analyzeBatch, executeBatch };

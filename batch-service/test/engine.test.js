@@ -63,17 +63,63 @@ test('every result row has numeric submittedAt <= confirmedAt', async () => {
   assert.strictEqual(rows[2].submittedAt, rows[2].confirmedAt);
 });
 
-test('issue endpoint rejects an unknown mode with 400', async () => {
+// Starts server.js on its own port (no chain needed: these tests stop at validation and middleware).
+async function withServer(port, env, fn) {
   const { spawn } = require('node:child_process');
   const path = require('node:path');
-  const port = 3999;
-  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(port) }, stdio: 'pipe' });
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(port), ...env }, stdio: 'pipe' });
   try {
     await new Promise((res, rej) => { child.stdout.on('data', (d) => /running/.test(String(d)) && res()); child.on('error', rej); setTimeout(() => rej(new Error('server did not start')), 5000); });
-    const r = await fetch(`http://127.0.0.1:${port}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'parallel', transactions: [{ studentId: 'A', programName: 'B' }] }) });
-    assert.strictEqual(r.status, 400);
-    assert.match((await r.json()).error, /mode/);
+    await fn(`http://127.0.0.1:${port}`);
   } finally {
     child.kill();
   }
+}
+const post = (base, body, headers = {}) => fetch(`${base}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+const row = { studentId: 'A', programName: 'B' };
+
+test('issue endpoint rejects an unknown mode with 400', () => withServer(3999, {}, async (base) => {
+  const r = await post(base, { mode: 'parallel', transactions: [row] });
+  assert.strictEqual(r.status, 400);
+  assert.match((await r.json()).error, /mode/);
+}));
+
+test('a | in any field gives 400', () => withServer(3998, {}, async (base) => {
+  for (const f of ['studentId', 'programName', 'metadata']) {
+    const r = await post(base, { transactions: [{ ...row, [f]: 'x|y' }] });
+    assert.strictEqual(r.status, 400, f);
+    assert.match((await r.json()).error, /\| character/);
+  }
+}));
+
+test('more than 1000 rows gives 400', () => withServer(3997, {}, async (base) => {
+  const r = await post(base, { transactions: Array.from({ length: 1001 }, (_, i) => ({ studentId: String(i), programName: 'B' })) });
+  assert.strictEqual(r.status, 400);
+  assert.match((await r.json()).error, /At most 1000/);
+}));
+
+test('a foreign Origin preflight gets no CORS header; the app origin does', () => withServer(3996, {}, async (base) => {
+  const pre = (origin) => fetch(`${base}/api/batch/issue`, { method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' } });
+  assert.strictEqual((await pre('https://evil.example')).headers.get('access-control-allow-origin'), null);
+  assert.strictEqual((await pre('http://localhost:3000')).headers.get('access-control-allow-origin'), 'http://localhost:3000');
+}));
+
+test('with BATCH_API_TOKEN set, a missing or wrong token gives 401', () => withServer(3995, { BATCH_API_TOKEN: 's3cret' }, async (base) => {
+  assert.strictEqual((await post(base, { transactions: [row] })).status, 401);
+  assert.strictEqual((await post(base, { transactions: [row] }, { Authorization: 'Bearer nope' })).status, 401);
+  // right token passes auth (and then fails validation, not authorization)
+  assert.strictEqual((await post(base, { transactions: [{ studentId: '', programName: '' }] }, { Authorization: 'Bearer s3cret' })).status, 400);
+}));
+
+test('the request handler never reads managerAddress', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+  assert.ok(!/managerAddress\s*[=}]\s*req\.body|req\.body[^;]*managerAddress/.test(src));
+  assert.ok(!/const \{[^}]*managerAddress[^}]*\} = req\.body/.test(src));
 });
+
+test('malformed JSON gives 400 and an oversized body gives 413', () => withServer(3994, {}, async (base) => {
+  const bad = await fetch(`${base}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{nope' });
+  assert.strictEqual(bad.status, 400);
+  const big = await fetch(`${base}/api/batch/issue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x: 'a'.repeat(3 * 1024 * 1024) }) });
+  assert.strictEqual(big.status, 413);
+}));

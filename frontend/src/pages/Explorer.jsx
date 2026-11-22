@@ -25,11 +25,14 @@ function Explorer() {
         const nameOf = async (a) => (names[a] ??= (await registry.institutions(a)).name || 'Unknown');
 
         const issued = await manager.queryFilter(manager.filters.CredentialIssued());
-        const revoked = new Set((await manager.queryFilter(manager.filters.CredentialRevoked())).map((e) => e.args.commitment));
-        setCreds(await Promise.all(issued.map(async (e) => ({
-          commitment: e.args.commitment, issuer: await nameOf(e.args.issuer), date: Number(e.args.issuedAt),
-          revoked: revoked.has(e.args.commitment)
-        }))).then((r) => r.reverse()));
+        // The contract decides the status: revoked, or issued by an institution that is no longer authorized.
+        setCreds(await Promise.all(issued.map(async (e) => {
+          const [isValid, , , isRevoked] = await manager.verifyCredential(e.args.commitment);
+          return {
+            commitment: e.args.commitment, issuer: await nameOf(e.args.issuer), date: Number(e.args.issuedAt),
+            status: isRevoked ? 'revoked' : isValid ? 'valid' : 'deregistered'
+          };
+        })).then((r) => r.reverse()));
 
         const n = Number(await manager.getBatchCount());
         const list = await Promise.all(Array.from({ length: n }, async (_, id) => {
@@ -92,7 +95,7 @@ function Explorer() {
                     <td><HashText value={c.commitment} compact to={`/verify?c=${c.commitment}`} /></td>
                     <td>{c.issuer}</td>
                     <td>{fmt(c.date)}</td>
-                    <td><span className={`badge ${c.revoked ? 'revoked' : 'valid'}`}>{c.revoked ? 'Revoked' : 'Valid'}</span></td>
+                    <td><span className={`badge ${c.status === 'deregistered' ? 'warn' : c.status}`}>{{ valid: 'Valid', revoked: 'Revoked', deregistered: 'Issuer deregistered' }[c.status]}</span></td>
                   </tr>
                 ))}
               </tbody>

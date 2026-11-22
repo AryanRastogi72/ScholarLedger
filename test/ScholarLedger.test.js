@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("ScholarLedger Contracts", function () {
   let InstitutionRegistry, registry, CredentialManager, manager;
@@ -48,8 +49,28 @@ describe("ScholarLedger Contracts", function () {
 
     it("Should revoke an institution", async function () {
       await registry.registerInstitution(institution1.address, "State University", "state.edu");
-      await registry.revokeInstitution(institution1.address);
+      await registry.revokeInstitution(institution1.address, await time.latest());
       expect(await registry.isRegistered(institution1.address)).to.be.false;
+    });
+
+    it("Should reject the zero address and an empty domain", async function () {
+      await expect(registry.registerInstitution(ethers.ZeroAddress, "X", "x.edu")).to.be.revertedWith("Zero address");
+      await expect(registry.registerInstitution(institution1.address, "X", "")).to.be.revertedWith("Domain required");
+    });
+
+    it("Should never let a deregistered address register again", async function () {
+      await registry.registerInstitution(institution1.address, "State University", "state.edu");
+      await registry.revokeInstitution(institution1.address, await time.latest());
+      await expect(
+        registry.registerInstitution(institution1.address, "State University", "state.edu")
+      ).to.be.revertedWith("Address was registered before");
+    });
+
+    it("Should reject a validUntil in the future", async function () {
+      await registry.registerInstitution(institution1.address, "State University", "state.edu");
+      await expect(
+        registry.revokeInstitution(institution1.address, (await time.latest()) + 1000)
+      ).to.be.revertedWith("validUntil in the future");
     });
   });
 
@@ -148,6 +169,29 @@ describe("ScholarLedger Contracts", function () {
       await expect(manager.connect(institution1).storeMerkleRoot(ethers.ZeroHash, 1)).to.be.revertedWith("Invalid root");
       await expect(manager.connect(institution1).storeMerkleRoot(r, 0)).to.be.revertedWith("Empty batch");
       await expect(manager.connect(institution2).storeMerkleRoot(r, 1)).to.be.revertedWith("Not a registered institution");
+    });
+
+    it("Credentials issued before validUntil stay valid after deregistration; later ones do not", async function () {
+      const early = ethers.keccak256(ethers.toUtf8Bytes("early"));
+      const late = ethers.keccak256(ethers.toUtf8Bytes("late"));
+      await manager.connect(institution1).issueCredential(early);
+      await time.increase(10);
+      const leakTime = await time.latest(); // the key is considered compromised from here on
+      await manager.connect(institution1).issueCredential(late);
+      await registry.revokeInstitution(institution1.address, leakTime);
+
+      expect((await manager.verifyCredential(early))[0]).to.be.true;
+      const [lateValid, , , lateRevoked] = await manager.verifyCredential(late);
+      expect(lateValid).to.be.false;
+      expect(lateRevoked).to.be.false;
+    });
+
+    it("A deregistered issuer cannot revoke", async function () {
+      await manager.connect(institution1).issueCredential(credentialHash);
+      await registry.revokeInstitution(institution1.address, await time.latest());
+      await expect(
+        manager.connect(institution1).revokeCredential(credentialHash)
+      ).to.be.revertedWith("Issuer not registered");
     });
 
     it("storeMerkleRoot rejects a count above uint32", async function () {

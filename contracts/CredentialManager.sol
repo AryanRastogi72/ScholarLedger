@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.20;
 
 import "./InstitutionRegistry.sol";
 
@@ -19,7 +19,7 @@ contract CredentialManager {
         uint64 timestamp;
     }
 
-    InstitutionRegistry public registry;
+    InstitutionRegistry public immutable registry;
 
     mapping(bytes32 => Credential) public credentials;
     uint256 public credentialCount;
@@ -54,10 +54,10 @@ contract CredentialManager {
     {
         Credential memory cred = credentials[commitment];
         bool exists = cred.issuedAt > 0;
-        bool issuerStillRegistered = exists ? registry.isRegistered(cred.issuer) : false;
+        bool issuerAuthorized = exists && registry.issuedWhileAuthorized(cred.issuer, cred.issuedAt);
 
         return (
-            exists && !cred.isRevoked && issuerStillRegistered,
+            exists && !cred.isRevoked && issuerAuthorized,
             cred.issuer,
             cred.issuedAt,
             cred.isRevoked
@@ -65,6 +65,7 @@ contract CredentialManager {
     }
 
     function revokeCredential(bytes32 commitment) external {
+        require(registry.isRegistered(msg.sender), "Issuer not registered");
         Credential storage cred = credentials[commitment];
         require(cred.issuedAt > 0, "Credential does not exist");
         require(cred.issuer == msg.sender, "Only issuer can revoke");

@@ -11,6 +11,13 @@ import HashText from '../components/HashText';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const STEP_MS = 350; // pacing only; the right-hand outcome waits for the real transaction
 
+// The outcome depends on why the call failed: the contract refused it, the user cancelled, or the node is down.
+const OUTCOME = {
+  revert: (m) => <><strong>Refused by the contract:</strong> {m}</>,
+  rejected: () => <strong>You cancelled in the wallet.</strong>,
+  offline: () => <strong>Cannot reach the node.</strong>
+};
+
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function Steps({ step, outcome }) {
@@ -88,8 +95,8 @@ function ForgeryDemo() {
         <div className="demo-divider" aria-hidden="true"><span>same forged hash</span></div>
 
         <section className="demo-col" aria-labelledby="real">
-          <h2 id="real">ScholarLedger <span className="badge neutral">Real transaction</span></h2>
-          <p>Switch MetaMask to an account that is not a registered institution, then send the same hash. This is a real transaction to your local node.</p>
+          <h2 id="real">ScholarLedger <span className="badge neutral">Real contract check</span></h2>
+          <p>Switch MetaMask to an account that is not a registered institution, then try the same hash. Your wallet first simulates the call on the contract. The contract refuses it, so nothing is broadcast.</p>
           {registered === true && <p className="tx-status" role="status"><span>The connected wallet is a registered institution, so this would succeed. Switch to an unregistered account first.</span></p>}
           {!account && <p className="muted">Connect a wallet from the top bar to try it.</p>}
           <button type="button" onClick={startRight} disabled={!account || registered === true || (right > 0 && right < 3)}>
@@ -98,10 +105,10 @@ function ForgeryDemo() {
           <Steps step={right} outcome={accepted ? (
             <div className="outcome ok"><CheckCircle size={22} weight="fill" aria-hidden="true" /> <span><strong>Accepted.</strong> This wallet is a registered institution.</span></div>
           ) : (
-            <div className="outcome bad"><XCircle size={22} weight="fill" aria-hidden="true" /> <span><strong>Rejected by the contract.</strong> {tx.message}</span></div>
+            <div className="outcome bad"><XCircle size={22} weight="fill" aria-hidden="true" /> <span>{OUTCOME[tx.kind ?? 'revert'](tx.message)}</span></div>
           )} />
           {right >= 1 && (
-            <div className="demo-card fade-in"><CertificateCard {...card} status={right === 3 ? (accepted ? 'VALID' : 'REJECTED') : undefined} /></div>
+            <div className="demo-card fade-in"><CertificateCard {...card} status={right === 3 ? (accepted ? 'VALID' : tx.kind === 'revert' ? 'REJECTED' : undefined) : undefined} /></div>
           )}
         </section>
       </div>

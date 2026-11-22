@@ -30,6 +30,9 @@ export async function parseCredentialFile(text) {
   for (const k of ['commitment', 'salt', 'studentId', 'programName']) {
     if (typeof f[k] !== 'string' || !f[k]) throw new Error(`Credential file is missing "${k}".`);
   }
+  if (['studentId', 'programName', 'metadata'].some((k) => String(f[k] ?? '').includes('|'))) {
+    throw new Error('This file contains a character that is not allowed.');
+  }
   if (!/^[0-9a-f]{64}$/.test(f.salt)) throw new Error('Credential file has an invalid salt.');
   if (!/^0x[0-9a-f]{64}$/.test(f.commitment)) throw new Error('Credential file has an invalid commitment.');
   if (await computeCommitment(f) !== f.commitment) {

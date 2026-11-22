@@ -60,7 +60,7 @@ function Home() {
     <div className="fade-in">
       <section className="hero-split">
         <div className="hero">
-          <h1>Academic credentials you can check, and nobody can forge.</h1>
+          <h1>Academic credentials you can check, and no unregistered wallet can issue.</h1>
           <p className="lede">
             Systems like Block.co anchor a document hash on a blockchain. That proves the document was not changed, but not
             who published it. Anyone with a wallet can anchor a forged degree and the check still says valid. ScholarLedger
@@ -120,7 +120,7 @@ function Home() {
         <div>
           <h2 id="occ">Batch issuance with conflict detection</h2>
           <p>
-            A graduation day means thousands of credentials. The batch service finds rows that clash, such as the same student
+            A graduation day means a long list of credentials, up to 1,000 rows per request. The batch service finds rows that clash, such as the same student
             and program twice, places them in different groups, and submits the rows of a group back to back without waiting
             for each other. Conflicting rows wait for the next group and are re-checked first. Then it anchors one Merkle root
             for everything that succeeded. This follows the optimistic concurrency idea from Block-STM.

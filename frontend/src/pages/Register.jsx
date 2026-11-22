@@ -5,6 +5,51 @@ import { useTx } from '../utils/useTx';
 import PageHeader from '../components/PageHeader';
 import TxStatus from '../components/TxStatus';
 
+// datetime-local value for "now", to the minute (so it is never in the future)
+const nowLocal = () => {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+};
+
+function Deregister() {
+  const [form, setForm] = useState({ address: '', validUntil: nowLocal() });
+  const [touched, setTouched] = useState(false);
+  const { tx, run } = useTx();
+  const addressError = ethers.isAddress(form.address.trim()) ? '' : 'Enter a valid Ethereum address (0x followed by 40 hex characters).';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setTouched(true);
+    if (addressError) return;
+    const seconds = Math.floor(new Date(form.validUntil).getTime() / 1000);
+    await run(async () => (await getRegistryContract(await getSigner())).revokeInstitution(form.address.trim(), seconds));
+  };
+
+  return (
+    <section className="narrow mt" aria-labelledby="dereg-h">
+      <h2 id="dereg-h">Deregister an institution</h2>
+      <p>
+        Credentials issued before the valid-until time stay valid; later ones stop verifying. Use now for a university that
+        closed, or the time a key leaked. An address that is deregistered can never be registered again.
+      </p>
+      <form onSubmit={submit} className="panel" noValidate>
+        <div className="field">
+          <label htmlFor="dereg-address">Wallet address</label>
+          <input id="dereg-address" className="mono" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} aria-invalid={touched && !!addressError} aria-describedby="e-dereg-address" autoComplete="off" />
+          <p className="field-error" id="e-dereg-address">{touched ? addressError : ''}</p>
+        </div>
+        <div className="field">
+          <label htmlFor="dereg-until">Valid until</label>
+          <input id="dereg-until" type="datetime-local" value={form.validUntil} onChange={(e) => setForm({ ...form, validUntil: e.target.value })} />
+        </div>
+        <button type="submit" className="danger" disabled={tx.phase === 'wallet' || tx.phase === 'submitted'}>Deregister institution</button>
+      </form>
+      <div className="mt"><TxStatus tx={tx} /></div>
+    </section>
+  );
+}
+
 function Register() {
   const [form, setForm] = useState({ address: '', name: '', domain: '' });
   const [touched, setTouched] = useState(false);
@@ -48,6 +93,7 @@ function Register() {
         <button type="submit" disabled={tx.phase === 'wallet' || tx.phase === 'submitted'}>Register institution</button>
       </form>
       <div className="mt"><TxStatus tx={tx} /></div>
+      <Deregister />
     </div>
   );
 }

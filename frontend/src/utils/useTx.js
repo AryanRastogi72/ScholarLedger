@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { friendlyError } from './errors';
+import { friendlyError, errorKind } from './errors';
 
 // Runs `send` (returns a transaction response) and tracks: wallet -> submitted -> confirmed | error.
 export function useTx() {
@@ -14,7 +14,7 @@ export function useTx() {
       setTx({ phase: 'confirmed', hash: sent.hash, block: receipt.blockNumber, gas: receipt.gasUsed.toString() });
       return { sent, receipt };
     } catch (err) {
-      setTx({ phase: 'error', message: friendlyError(err) });
+      setTx({ phase: 'error', message: friendlyError(err), kind: errorKind(err) });
       return null;
     }
   }, []);

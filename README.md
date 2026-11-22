@@ -12,7 +12,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 **ScholarLedger** closes this gap with two core innovations:
 
 1. **Identity-Bound Issuance** — An on-chain `InstitutionRegistry` whitelists verified university addresses. The `CredentialManager` contract enforces that **only registered institutions** can issue credentials.
-2. **Optimistic Concurrency Control (OCC) Batch Engine** — An off-chain Node.js service inspired by Block-STM (Gelashvili et al., PPoPP 2023) that detects read/write conflicts among credential transactions and submits non-conflicting ones back to back without waiting for each other, which suits peak issuance periods (e.g., graduation season).
+2. **Optimistic Concurrency Control (OCC) Batch Engine** — An off-chain Node.js service inspired by optimistic concurrency control (Block-STM, Gelashvili et al., PPoPP 2023): group, validate, then commit or abort. It detects conflicts among credential rows and submits non-conflicting ones back to back without waiting for each other. It does not parallelise the EVM.
 
 ---
 
@@ -86,7 +86,7 @@ npm install
 npm test      # engine and Merkle tests
 node server.js
 ```
-The service signs with `ISSUER_PRIVATE_KEY` (default: Hardhat Account #1, local dev only) and reads the chain at `RPC_URL` (default `http://127.0.0.1:8545`). The key never travels over HTTP.
+The service signs with `ISSUER_PRIVATE_KEY` (the Hardhat Account #1 fallback is used only on the local Hardhat chain, 31337) and reads the chain at `RPC_URL` (default `http://127.0.0.1:8545`). The key never travels over HTTP. The service listens on `127.0.0.1` only (`HOST` to change it), accepts browser requests only from `ALLOWED_ORIGINS` (default `http://localhost:3000`), and if `BATCH_API_TOKEN` is set, requires `Authorization: Bearer <token>` on `POST /api/batch/*` (the frontend sends it when `VITE_BATCH_API_TOKEN` is set). A request takes at most 1000 rows; credential files are also saved to `batch-service/out/` before the Merkle root is anchored.
 
 ### Terminal 4 — Start Frontend
 ```bash
@@ -126,7 +126,7 @@ ScholarLedger/
 ├── scripts/
 │   └── deploy.js                 # Deploys contracts + exports ABIs to frontend
 ├── test/
-│   └── ScholarLedger.test.js       # 19 unit tests (forgery prevention, access control, commitments, batches)
+│   └── ScholarLedger.test.js       # 24 unit tests (forgery prevention, access control, deregistration, commitments, batches)
 ├── batch-service/
 │   ├── server.js                 # Express API (POST /api/batch/issue, /analyze)
 │   ├── occEngine.js              # OCC conflict detection + parallel grouping
@@ -137,7 +137,8 @@ ScholarLedger/
 │   ├── src/
 │   │   ├── pages/                # Home, Register, Issue, BatchIssue, Verify,
 │   │   │                         # Revoke, Explorer, ForgeryDemo
-│   │   ├── components/           # Navbar, HashText, TxStatus, StatusPanel, FileDrop, PageHeader
+│   │   ├── components/           # Navbar, HashText, TxStatus, StatusPanel, FileDrop, PageHeader,
+│   │   │                         # BatchTimeline, CertificateCard, Diagrams
 │   │   ├── styles/tokens.css     # Design tokens
 │   │   └── utils/                # Contract helpers, credential/commitment helpers, errors
 │   └── index.html
@@ -171,14 +172,29 @@ That is about 8.1 times faster. The numbers come from the `metrics` object the s
 
 If the batch service is killed in the middle of a group, the node may be left with automine off. Restart `npx hardhat node`, or send `evm_setAutomine true` to it. Each row waits at most 30 seconds for its confirmation and then fails with "Timed out waiting for confirmation"; a timed-out run may leave pending transactions, so restart the node.
 
+### Deregistration
+
+The admin can deregister an institution with a "valid until" time (`revokeInstitution(addr, validUntil)`). Credentials issued before that time stay valid, later ones stop verifying, and a deregistered key can no longer revoke. A deregistered address can never be registered again; an institution that lost its key registers a new address.
+
+---
+
+## Known limitations
+
+- The batch service is local-only and holds the issuer key. Letting institutions sign their own batches is future work.
+- There is a single admin key for the registry.
+- The chain is an in-memory Hardhat node; nothing here is deployed to a public network.
+- Duplicates across batches are not detected: the contract only sees salted commitments, so issuers dedupe off-chain.
+- The Merkle tree duplicates the last node on odd levels and has no domain separation between leaves and inner nodes.
+
 ---
 
 ## 📚 References
 
 1. G. Zonneveld, G. Rafaiani, M. Baldi, *"A Forgery Attack on the Block.co Blockchain-Based Digital Credential Certification System,"* arXiv:2606.31462, 2026.
-2. R. Q. Saramago, H. Meling, L. N. Jehl, *"A Privacy-Preserving and Transparent Certification System for Digital Credentials,"* OPODIS 2022.
+2. R. Q. Saramago, H. Meling, L. N. Jehl, *"A Privacy-Preserving and Transparent Certification System for Digital Credentials,"* OPODIS 2022 (proceedings published 2023).
 3. A. Gelashvili et al., *"Block-STM: Scaling Blockchain Execution by Turning Ordering Curse to a Performance Blessing,"* PPoPP 2023.
 4. G. Fernández-Blanco et al., *"A Blockchain Based System for Preventing Academic Forgery: Design and Practical Evaluation for CPU-Based and Low-Power Computers,"* IEEE BCCA 2024.
+5. P. S. Anjana, S. Kumari, S. Peri, S. Rathor, A. Somani, *"An Efficient Framework for Optimistic Concurrent Execution of Smart Contracts,"* PDP 2019.
 
 ---
 

@@ -7,6 +7,7 @@ import FileDrop from '../components/FileDrop';
 import BatchTimeline from '../components/BatchTimeline';
 
 const BATCH_API = import.meta.env.VITE_BATCH_API ?? 'http://localhost:3001/api/batch';
+const TOKEN = import.meta.env.VITE_BATCH_API_TOKEN; // only needed when the service sets BATCH_API_TOKEN
 const blank = () => ({ studentId: '', programName: '', metadata: '' });
 const SAMPLE = 'studentId,programName,metadata\nS1001,B.Tech CSE,2026\nS1002,B.Tech CSE,2026\nS1003,B.Sc Physics,2026\nS1001,B.Tech CSE,duplicate row\n';
 const keyOf = (t) => `${t.studentId.trim()}|${t.programName.trim()}`;
@@ -39,7 +40,7 @@ function BatchIssue() {
     setBusy(label);
     try {
       const res = await fetch(`${BATCH_API}/${path}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}) }, body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'The batch service rejected the request.');
@@ -94,7 +95,7 @@ function BatchIssue() {
             <DownloadSimple size={16} aria-hidden="true" /> Sample CSV
           </button>
         </div>
-        <FileDrop onFile={onFile} accept=".csv,text/csv" title="Upload a CSV" hint="Columns: studentId, programName, metadata (header row first)" />
+        <FileDrop onFile={onFile} accept=".csv,text/csv" title="Upload a CSV" hint="Columns: studentId, programName, metadata (header row first). Fields must not contain commas or the | character." />
         <div className="table-wrap">
           <table>
             <thead><tr><th>Student ID</th><th>Program</th><th>Details</th><th><span className="sr-only">Remove</span></th></tr></thead>

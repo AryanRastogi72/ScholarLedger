@@ -7,6 +7,8 @@ import TxStatus from '../components/TxStatus';
 import CertificateCard from '../components/CertificateCard';
 import HashText from '../components/HashText';
 
+const NO_BAR = 'The | character is not allowed.';
+
 function Issue() {
   const [form, setForm] = useState({ studentId: '', programName: '', metadata: '' });
   const [touched, setTouched] = useState(false);
@@ -15,14 +17,15 @@ function Issue() {
   const { tx, run } = useTx();
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const errors = {
-    studentId: form.studentId.trim() ? '' : 'Student ID is required.',
-    programName: form.programName.trim() ? '' : 'Program name is required.'
+    studentId: !form.studentId.trim() ? 'Student ID is required.' : form.studentId.includes('|') ? NO_BAR : '',
+    programName: !form.programName.trim() ? 'Program name is required.' : form.programName.includes('|') ? NO_BAR : '',
+    metadata: form.metadata.includes('|') ? NO_BAR : ''
   };
 
   const submit = async (e) => {
     e.preventDefault();
     setTouched(true);
-    if (errors.studentId || errors.programName) return;
+    if (errors.studentId || errors.programName || errors.metadata) return;
     setFile(null);
     setCert(null);
     const salt = newSalt();
@@ -64,7 +67,8 @@ function Issue() {
         </div>
         <div className="field">
           <label htmlFor="metadata">Additional details (optional)</label>
-          <textarea id="metadata" rows={3} value={form.metadata} onChange={set('metadata')} />
+          <textarea id="metadata" rows={3} value={form.metadata} onChange={set('metadata')} aria-invalid={touched && !!errors.metadata} aria-describedby="e-metadata" />
+          <p className="field-error" id="e-metadata">{touched ? errors.metadata : ''}</p>
           <p className="hint">For example graduation year or honours. Stored only in the credential file.</p>
         </div>
         <button type="submit" disabled={tx.phase === 'wallet' || tx.phase === 'submitted'}>Issue credential</button>

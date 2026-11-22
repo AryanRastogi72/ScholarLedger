@@ -10,14 +10,21 @@ const { analyzeBatch, executeBatch } = require('./occEngine');
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
+const HOST = process.env.HOST ?? '127.0.0.1'; // loopback only: this service holds the issuer key
+const TOKEN = process.env.BATCH_API_TOKEN; // optional bearer token for POST /api/batch/*
+const MAX_ROWS = 1000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors({ origin: (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000').split(',') }));
+app.use(express.json({ limit: '2mb' }));
+app.use('/api/batch', (req, res, next) => {
+  if (TOKEN && req.get('Authorization') !== `Bearer ${TOKEN}`) return res.status(401).json({ error: 'Missing or wrong API token' });
+  next();
+});
 
 const abisPath = path.join(__dirname, '../frontend/src/abis');
+const outDir = path.join(__dirname, 'out');
 const RPC_URL = process.env.RPC_URL ?? 'http://127.0.0.1:8545';
-// Hardhat account #1 (local dev only)
+// Hardhat account #1: used only on the local Hardhat chain (31337)
 const HARDHAT_ACCOUNT_1_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
 // Re-read on each request so a deploy after server start is picked up
@@ -39,10 +46,15 @@ const conflictKey = (tx) => `${trim(tx.studentId)}|${trim(tx.programName)}`;
 
 function validateRows(transactions) {
   if (!transactions || !Array.isArray(transactions)) return 'transactions must be an array';
+  if (transactions.length > MAX_ROWS) return `At most ${MAX_ROWS} rows per request`;
   for (let i = 0; i < transactions.length; i++) {
     const t = transactions[i];
     if (!t || !String(t.studentId ?? '').trim() || !String(t.programName ?? '').trim()) {
       return `Row ${i + 1}: studentId and programName are required`;
+    }
+    // "|" separates the fields inside the commitment, so it must not appear in them
+    if ([t.studentId, t.programName, t.metadata].some((v) => String(v ?? '').includes('|'))) {
+      return `Row ${i + 1}: the | character is not allowed`;
     }
   }
   return null;
@@ -71,9 +83,22 @@ app.post('/api/batch/analyze', (req, res, next) => {
   }
 });
 
+// Credential files already built are saved to disk before the root is anchored, so a late failure never loses them.
+function saveFiles(name, files) {
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, name), JSON.stringify(files, null, 2));
+}
+
+// Short message for the client; the raw error is logged on the server.
+function shortError(e) {
+  console.error('Batch error:', e);
+  return e.shortMessage ?? e.reason ?? (e.code === 'TIMEOUT' ? 'Timed out waiting for confirmation' : 'Transaction failed');
+}
+
 async function issueBatch(req, res, next) {
+  const files = {}; // row idx -> credential file, built as soon as the row confirms
   try {
-    const { transactions, managerAddress, mode = 'grouped' } = req.body;
+    const { transactions, mode = 'grouped' } = req.body;
     if (mode !== 'grouped' && mode !== 'sequential') return res.status(400).json({ error: 'mode must be "grouped" or "sequential"' });
     const err = validateRows(transactions);
     if (err) return res.status(400).json({ error: err });
@@ -84,15 +109,21 @@ async function issueBatch(req, res, next) {
     } catch (e) {
       return res.status(500).json({ error: e.message });
     }
+    const managerAddress = deployment.addresses.CredentialManager;
 
     const rows = withCommitment(transactions).map((r, idx) => ({ ...r, idx }));
     const analysis = analyzeBatch(rows, conflictKey);
 
     const provider = new ethers.JsonRpcProvider(RPC_URL);
-    const wallet = new ethers.Wallet(process.env.ISSUER_PRIVATE_KEY ?? HARDHAT_ACCOUNT_1_KEY, provider);
-    const manager = new ethers.Contract(managerAddress || deployment.addresses.CredentialManager, deployment.managerAbi, wallet);
-
     const { chainId } = await provider.getNetwork();
+    const key = process.env.ISSUER_PRIVATE_KEY ?? (chainId === 31337n ? HARDHAT_ACCOUNT_1_KEY : null);
+    if (!key) return res.status(500).json({ error: 'ISSUER_PRIVATE_KEY is required outside the local Hardhat chain' });
+    if (await provider.getCode(managerAddress) === '0x') {
+      return res.status(500).json({ error: 'Contract not deployed at the configured address; run deploy' });
+    }
+    const wallet = new ethers.Wallet(key, provider);
+    const manager = new ethers.Contract(managerAddress, deployment.managerAbi, wallet);
+
     // Local dev node only: mine one block per group so the group's parallelism is visible on chain.
     const blockPerGroup = mode === 'grouped' && chainId === 31337n;
     const GAS = 200_000; // issue costs about 61k; a low limit keeps a whole group inside one block
@@ -108,7 +139,8 @@ async function issueBatch(req, res, next) {
     let sendQueue = Promise.resolve();
     const committedKeys = new Set(); // OCC validation: keys already committed in this request
     const blocks = {}; // row idx -> block number
-    const groupState = {}; // blockPerGroup: per group { ready, remaining, expectedNonce }
+    const groupState = {}; // blockPerGroup: per group { ready, remaining }
+    let submittedCount = 0; // rows that actually reached the node (aborted duplicates do not count)
 
     const prepareGroup = (g, size) => {
       if (!groupState[g]) {
@@ -146,7 +178,7 @@ async function issueBatch(req, res, next) {
           if (m) return m[1];
         }
       }
-      return e.reason ?? e.shortMessage ?? e.message;
+      return shortError(e);
     };
 
     const executorFn = async (tx, mark, ctx) => {
@@ -167,11 +199,25 @@ async function issueBatch(req, res, next) {
         if (!blockPerGroup) sendQueue = sending.catch(() => {});
         sent = await sending;
         mark();
+        submittedCount++;
         submitted = true;
         if (blockPerGroup) await settleSubmit(g);
         const receipt = await sent.wait(1, 30_000); // throws on revert; the timeout stops a nonce gap from hanging the request
         blocks[tx.idx] = receipt.blockNumber;
         committedKeys.add(conflictKey(tx));
+        files[tx.idx] = { // batch proof is filled in after the root is anchored
+          format: 'scholarledger-credential/1',
+          commitment: tx.commitment,
+          salt: tx.salt,
+          studentId: tx.studentId,
+          programName: tx.programName,
+          metadata: tx.metadata,
+          issuer: wallet.address,
+          chainId: Number(chainId),
+          contract: managerAddress,
+          issuedTx: receipt.hash,
+          batch: null
+        };
         return receipt.hash;
       } catch (e) {
         if (blockPerGroup && !submitted) await settleSubmit(g);
@@ -181,9 +227,15 @@ async function issueBatch(req, res, next) {
 
     // sequential: one row at a time, wait for each receipt, automine on (the classic baseline)
     const groups = mode === 'sequential' ? rows.map((r) => [r]) : analysis.groups;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     let execResults;
     try {
       execResults = await executeBatch(groups, executorFn);
+    } catch (e) {
+      // Something broke after some rows may already be on chain: keep and return what was built.
+      const built = Object.values(files);
+      if (built.length) saveFiles(`batch-${stamp}.json`, built);
+      return res.status(500).json({ error: shortError(e), credentials: built });
     } finally {
       if (blockPerGroup && Object.keys(groupState).length) await provider.send('evm_setAutomine', [true]);
     }
@@ -192,42 +244,42 @@ async function issueBatch(req, res, next) {
     const ok = flat.filter(r => r.success);
     const succeeded = ok.length;
     const failed = flat.length - succeeded;
+    const credentials = ok.map((r) => files[r.tx.idx]);
 
     let root = null;
     let batchId = null;
-    let credentials = [];
+    let rootError = null;
+    let anchorTimeMs = 0;
     if (succeeded > 0) {
-      const tree = buildMerkleTree(ok.map(r => r.tx.commitment.slice(2)));
-      root = '0x' + tree.root;
-      const rootTx = await manager.storeMerkleRoot(root, succeeded, { nonce: nextNonce++, gasLimit: 200_000 });
-      const rootReceipt = await rootTx.wait();
-      for (const log of rootReceipt.logs) {
-        const ev = manager.interface.parseLog(log);
-        if (ev?.name === 'BatchProcessed') batchId = Number(ev.args.batchId);
+      saveFiles(`batch-${stamp}.json`, credentials); // before the root step, so nothing is lost if it fails
+      const anchorStart = Date.now();
+      try {
+        const tree = buildMerkleTree(ok.map(r => r.tx.commitment.slice(2)));
+        const candidate = '0x' + tree.root;
+        const rootTx = await manager.storeMerkleRoot(candidate, succeeded, { nonce: nextNonce++, gasLimit: 200_000 });
+        const rootReceipt = await rootTx.wait(1, 30_000);
+        for (const log of rootReceipt.logs) {
+          const ev = manager.interface.parseLog(log);
+          if (ev?.name === 'BatchProcessed') batchId = Number(ev.args.batchId);
+        }
+        root = candidate;
+        credentials.forEach((c, i) => { c.batch = { batchId, merkleRoot: root, leafIndex: i, proof: tree.proofs[i] }; });
+        saveFiles(`batch-${stamp}.json`, credentials);
+      } catch (e) {
+        rootError = shortError(e); // the rows are issued; only the batch proof is missing
       }
-      const contract = await manager.getAddress();
-      credentials = ok.map((r, i) => ({
-        format: 'scholarledger-credential/1',
-        commitment: r.tx.commitment,
-        salt: r.tx.salt,
-        studentId: r.tx.studentId,
-        programName: r.tx.programName,
-        metadata: r.tx.metadata,
-        issuer: wallet.address,
-        chainId: Number(chainId),
-        contract,
-        issuedTx: r.result,
-        batch: { batchId, merkleRoot: root, leafIndex: i, proof: tree.proofs[i] }
-      }));
+      anchorTimeMs = Date.now() - anchorStart;
     }
 
     // Do not return salts in the per-row results; they travel only inside `credentials`
     const results = execResults.results.map(g => g.map(({ tx, ...rest }) => ({ ...rest, blockNumber: blocks[tx.idx] ?? null, tx: { idx: tx.idx, studentId: tx.studentId, programName: tx.programName, commitment: tx.commitment } })));
+    const totalTimeMs = execResults.metrics.totalTimeMs;
 
     return res.json({
       success: true,
       results,
       merkleRoot: root,
+      rootError,
       conflicts: analysis.conflicts.map(({ txA, txB, key }) => ({ txA, txB, key })),
       batchId,
       credentials,
@@ -240,11 +292,19 @@ async function issueBatch(req, res, next) {
         mode,
         blockPerGroup,
         blocksUsed: new Set(Object.values(blocks)).size,
-        totalTimeMs: execResults.metrics.totalTimeMs,
-        throughputTxPerSec: execResults.metrics.throughputTxPerSec
+        totalTimeMs,
+        anchorTimeMs,
+        // only rows that were actually submitted count, so aborted duplicates do not inflate the rate
+        throughputTxPerSec: totalTimeMs > 0 ? submittedCount / (totalTimeMs / 1000) : 0
       }
     });
   } catch (error) {
+    // A failure after some rows confirmed must not drop their files.
+    const built = Object.values(files);
+    if (built.length) {
+      saveFiles(`batch-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, built);
+      return res.status(500).json({ error: shortError(error), credentials: built });
+    }
     next(error);
   }
 }
@@ -252,15 +312,17 @@ async function issueBatch(req, res, next) {
 // shortcut: one batch at a time per service (nonces come from one issuer key); fine for one issuer
 let lock = Promise.resolve();
 app.post('/api/batch/issue', (req, res, next) => {
-  lock = lock.then(() => issueBatch(req, res, next)); // issueBatch reports its own errors via next
+  lock = lock.then(() => issueBatch(req, res, next)).catch(() => {}); // the lock must always release
 });
 
-// Error handling middleware
+// Error handling middleware: oversized bodies give 413, bad JSON gives 400; raw ethers errors are shortened
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
-  res.status(500).json({ error: err.message || 'Internal server error' });
+  const status = err.status ?? err.statusCode ?? 500;
+  const message = status < 500 ? err.message : err.shortMessage ?? 'Internal server error';
+  res.status(status).json({ error: message });
 });
 
-app.listen(PORT, () => {
-  console.log(`OCC Batch Engine Server running on port ${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`OCC Batch Engine Server running on ${HOST}:${PORT}`);
 });
