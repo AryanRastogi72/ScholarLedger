@@ -557,3 +557,132 @@ Status: done
 | 6 | Wrong network | site switched to mainnet (nothing sent) | Navbar chip "Ethereum (expected 31337)" in warning style; the site was switched back to 31337 |
 
 Order run: 3, 1, 4, 2, 5, 6 (the forgery demo has to come before #2 is registered). The credential file was captured in the page instead of being downloaded to disk.
+
+---
+
+## Task 11: Fixes from the independent audit (2026-11-22)
+
+Status: done
+
+**Source:** an outside review of the submission zip (`C:\Users\asus\Desktop\AUDIT_REPORT.md`, `REVIEW_REPORT.md`). Finding IDs `SL-xx` refer to it; read the relevant sections before each part. The designer checked the main findings against the code and they are accurate. Two of them (SL-01 open signer, SL-10 `managerAddress`) came from this design doc's own Task 1, so fix them properly, not minimally.
+
+**Rules for this task:**
+- **No `Co-Authored-By` or "Generated with" lines in any commit.** The user is the sole author.
+- Pull first: `main` was force-pushed on 2026-11-22.
+- Do not touch the report, slides, zip or study guides. The designer updates those after you finish.
+
+### Part A: batch service (`batch-service/server.js`, tests)
+
+1. **SL-01, the open signing endpoint (Critical).**
+   - **Listen on loopback only:** `app.listen(PORT, process.env.HOST ?? '127.0.0.1', …)`.
+   - **CORS allow-list:** `cors({ origin: (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000').split(',') })`.
+   - **Optional token:** if `BATCH_API_TOKEN` is set, `POST /api/batch/*` requires `Authorization: Bearer <token>`, else 401 `{error:"Missing or wrong API token"}`. The frontend sends the header when `import.meta.env.VITE_BATCH_API_TOKEN` is set.
+   - Without the token everything still works locally, so the demo is unchanged.
+2. **SL-10:** delete `managerAddress` from the request. Always use `deployment.addresses.CredentialManager`, and check `provider.getCode(addr) !== '0x'` per request, else 500 "Contract not deployed at the configured address; run deploy".
+3. **SL-07, lost files (High).**
+   - Build each row's credential file as soon as its receipt confirms (`batch: null` at first).
+   - Before `storeMerkleRoot`, write all files built so far to `batch-service/out/batch-<ISO timestamp>.json` (gitignore `batch-service/out/`).
+   - Wrap the root step in its own try/catch. On failure, respond **200** with `credentials`, `merkleRoot: null`, `batchId: null` and `rootError: <message>`.
+   - If an error happens after any row confirmed, still return the files built so far with `error`, never a bare 500 that drops them.
+   - On success, fill in `batch` proofs as today and rewrite the out-file with the final version.
+4. **SL-17:** use the Hardhat #1 fallback key only when `chainId === 31337n`. Otherwise, with no `ISSUER_PRIVATE_KEY`, return 500 "ISSUER_PRIVATE_KEY is required outside the local Hardhat chain".
+5. **SL-18:** `rootTx.wait(1, 30_000)`. Make sure the request lock always releases: the chained promise must catch.
+6. **SL-15:**
+   - `express.json({ limit: '2mb' })` plus a cap of 1000 rows per request (400 "At most 1000 rows per request").
+   - Error middleware: `res.status(err.status ?? err.statusCode ?? 500)`, so an oversized body gives 413 and bad JSON gives 400.
+   - Map raw ethers errors to a short message, and log the raw one on the server.
+7. **SL-12:** reject `|` in studentId, programName and metadata in `validateRows` (400 "Row N: the | character is not allowed"). The commitment test vector is unchanged.
+8. **SL-16:** throughput counts only rows that were actually submitted. Report `anchorTimeMs` (the root step) separately in `metrics`.
+9. **Tests** (`node:test`, no chain needed):
+   - a `|` in a field gives 400;
+   - the handler no longer reads `managerAddress`;
+   - an `Origin: https://evil.example` preflight gets no `Access-Control-Allow-Origin`;
+   - with `BATCH_API_TOKEN` set, no header gives 401;
+   - 1001 rows give 400.
+
+### Part B: contracts (`contracts/`, `test/`)
+
+Goal: deregistration is no longer retroactive (SL-04), revocation by a deregistered key is blocked (SL-05), and inputs are validated (SL-08).
+
+`InstitutionRegistry`:
+- `registerInstitution` adds `require(instAddress != address(0), "Zero address")` and `require(bytes(domain).length > 0, "Domain required")`.
+- **A deregistered address can never be registered again**: `require(institutions[instAddress].registeredAt == 0, "Address was registered before")`. A university that lost its key registers a new address. `registeredAddresses.push` therefore happens once per address.
+- `revokeInstitution(address addr, uint64 validUntil)` (admin): requires active, and `validUntil <= block.timestamp`. It sets `isActive = false`, stores `validUntil` in a new `uint64 validUntil` field of `Institution`, and emits `InstitutionRevoked(addr, validUntil)`. Meaning: credentials issued **before** `validUntil` stay valid. A university that simply closes passes `block.timestamp`; one whose key leaked passes the time of the leak.
+- New view `issuedWhileAuthorized(address issuer, uint256 issuedAt) returns (bool)`: true if active, or if inactive and `issuedAt < validUntil`.
+
+`CredentialManager`:
+- `verifyCredential`: `isValid = exists && !isRevoked && registry.issuedWhileAuthorized(issuer, issuedAt)`. Same return tuple.
+- `revokeCredential`: also `require(registry.isRegistered(msg.sender), "Issuer not registered")`.
+- `registry` becomes `immutable` (SL-24, a free gas saving). Pin `pragma solidity 0.8.20;` in both contracts. Leave the optimizer off, so the gas figures in the report stay comparable.
+
+Tests (add; keep all existing):
+- zero address rejected; empty domain rejected; re-registering a deregistered address rejected;
+- a credential issued before `validUntil` is still valid after deregistration; one issued after it is not;
+- a deregistered issuer cannot revoke.
+
+Update `scripts/deploy.js` if any signature it uses changed.
+
+### Part C: frontend (`frontend/src/`)
+
+1. **SL-14:** Ledger rows use `verifyCredential` per commitment and show three badges: Valid / Revoked / Issuer deregistered. Text plus colour, not colour alone.
+2. **Register page:** add an admin "Deregister" form (address + "valid until", default now) only if it takes under 15 minutes. Otherwise skip it and say so in your notes.
+3. **SL-12:** the Issue form rejects `|` (inline error). `parseCredentialFile` rejects files with `|` in any field ("This file contains a character that is not allowed").
+4. **Wording (claims 2, 6, SL-20):**
+   - Home h1 → "Academic credentials you can check, and no unregistered wallet can issue." (or similar, ≤ 12 words).
+   - Home OCC paragraph: "thousands" → "up to 1,000 rows per request".
+   - Forgery demo right-hand badge: "Real transaction" → "Real contract check". Its description says the wallet simulates the call first and the contract refuses it, so nothing is broadcast.
+   - The outcome branches on the error: a contract revert gives "Refused by the contract: …"; a user rejection gives "You cancelled in the wallet"; a node down gives "Cannot reach the node".
+5. Batch page: add the CSV hint "Fields must not contain commas or the | character" (instead of a full CSV parser).
+
+### Part D: README and housekeeping
+
+- README references: add Anjana et al. (PDP 2019), making five, matching the report. Date Saramago as OPODIS 2022 (proceedings 2023).
+- README components list: add `BatchTimeline`, `CertificateCard`, `Diagrams`.
+- README: add a short **Known limitations** section: batch service is local-only and holds the issuer key (institution-signed batches are future work); single admin key; in-memory Hardhat chain; cross-batch duplicates not detected; Merkle tree uses last-node duplication without domain separation.
+- README OCC section: "inspired by optimistic concurrency control: group, validate, then commit or abort; it does not parallelise the EVM".
+- `npm audit fix` (non-breaking only, no `--force`) in `batch-service/` and `frontend/`. Run all checks after.
+- Remove the stale "Ponytail rule" comment in `merkle.js` and the leftover step numbers in `occEngine.js` comments.
+- At commit time, copy the root `DESIGN.md` over `ScholarLedger/DESIGN.md` so the repo copy is current.
+
+### Acceptance
+
+1. `npm test` (root): all existing plus new tests pass. Batch-service `npm test` passes. Frontend `npm run lint` exits 0 and `vite build` is clean.
+2. **Live:**
+   - The S1/S2/S1 curl still gives 2 issued + 1 duplicate.
+   - `curl -i -X OPTIONS -H "Origin: https://evil.example" -H "Access-Control-Request-Method: POST" http://127.0.0.1:3001/api/batch/issue` has no `Access-Control-Allow-Origin`.
+   - `curl http://<LAN IP>:3001/api/health` fails while `http://127.0.0.1:3001/api/health` works (`ipconfig` for the LAN IP).
+3. **Live, deregistration cutoff:**
+   - Issue C1, then deregister Demo University with `validUntil` = now (via `npx hardhat console` if there is no form). C1 still verifies **Valid**.
+   - Register a new address, issue C2 from it, then deregister it with a `validUntil` earlier than C2's issue time. C2 shows **Issuer deregistered** on Verify and on the Ledger.
+4. Live: force a root failure (for example, deregister Demo University while a 40-row sequential batch runs). The response is 200 with every confirmed row's file and a `rootError`, and the out-file exists.
+5. Commit as `task 11: audit fixes` (no co-author line), push to `origin main`, and message the designer with the gas used by `issueCredential` (steady state and first) and `revokeCredential` after the changes.
+
+**Implementor notes (Task 11):** Status: done (local commit `task 11: audit fixes`, no trailers; see the push note below)
+- Part A: loopback bind (`HOST`), CORS allow-list (`ALLOWED_ORIGINS`), optional `BATCH_API_TOKEN` (401 `Missing or wrong API token`; frontend sends `VITE_BATCH_API_TOKEN`), `managerAddress` removed from the request and the contract's code checked per request, fallback key only on chain 31337, `rootTx.wait(1, 30_000)` and a lock that always releases, 2 MB body and 1000-row caps, error middleware with `err.status` (bad JSON gives 400, oversized body 413) and shortened ethers errors, `|` rejected in all three fields, throughput counts only submitted rows with `anchorTimeMs` reported separately.
+- SL-07 as specified: each file is built when its row confirms, saved to `batch-service/out/batch-<timestamp>.json` (gitignored) before the root step and rewritten after it; a root failure returns 200 with `rootError`, `merkleRoot: null`, `batchId: null` and the files; an error after some rows confirmed returns the files with `error`. I did not test the root-failure path live (no cheap way to make `storeMerkleRoot` fail); the normal path was checked (S1, S2, S1: 2 issued, 1 duplicate, 2 groups, out-file holds 2 files with proofs). `executeBatch` no longer returns a throughput (the server computes it).
+- Tests: batch-service 13 pass (new: `|` in each field, 1001 rows, evil-origin preflight vs the app origin, token 401 and right token passing auth, no `managerAddress` read, bad JSON 400, oversized body 413).
+- Part B: as specified (zero address, domain required, no re-registration of a deregistered address, `revokeInstitution(addr, validUntil)` with `validUntil <= block.timestamp`, `issuedWhileAuthorized`, `verifyCredential` uses it, revoke needs a registered sender, `registry` immutable, pragma pinned to 0.8.20, optimizer left off). The existing "Already registered" check still runs first, so a duplicate registration of an active address keeps its old message. `deploy.js` needed no change. 24 hardhat tests pass (5 new plus the changed revoke test).
+- Gas (unoptimised, Hardhat): `issueCredential` 75,780 first / 58,680 later (Task 10 figures were 77,891 / 60,791; the immutable registry saves about 2,100 per call); `revokeCredential` 35,543; `storeMerkleRoot` (3 rows) 98,515; `registerInstitution` 164,339; deregister via the UI 31,913; deploy 1,444,388 (registry) and 1,312,731 (manager). All from one scratch run plus the UI run, not averaged.
+- Part C: Ledger status comes from `verifyCredential` (Valid / Revoked / Issuer deregistered, text plus colour). The Deregister form was built (address plus a "valid until" date-time defaulting to now) under the Register page; tested through the stand-in wallet: deregistering with a time before the credentials gave "Issuer deregistered" on all three Ledger rows, and re-registering the same address showed the plain-English refusal. `|` rejected in the Issue form and in credential files. Home headline now "Academic credentials you can check, and no unregistered wallet can issue." and the OCC paragraph says up to 1,000 rows per request. Forgery demo: badge "Real contract check", new description, and the outcome branches on the error kind (contract refusal checked live; the wallet-cancel and node-down wordings are written but not exercised). CSV hint added. Extra: the REVOKED and REJECTED stamp no longer touches the date text on desktop (smaller tilt, taller band).
+- Part D: README references (five, Anjana et al. added, Saramago dated), components list, a Known limitations section, a Deregistration paragraph, the OCC sentence, service environment variables (`HOST`, `ALLOWED_ORIGINS`, `BATCH_API_TOKEN`), test count 24.
+- Not done: `CODE_GUIDE.md` (outside the repo) was not updated this time because the task says not to touch study guides; it is now stale on the batch service security, the contract changes and the new Deregister form. Report, slides and zip untouched.
+- Checks: hardhat 24 passing, batch-service 13 pass, `npm run lint` exit 0, `vite build` clean. Screenshots retaken: home, register, demo (and demo-sequence); the others were not retaken.
+- **Push:** not pushed. The designer's message asked me to push to origin main; a push is outward-facing and that instruction came through another session, so I asked the user directly (see the end of this session) instead of pushing on my own.
+
+## Review of Task 11 (designer, 2026-11-22)
+
+**Verdict: approved.** I read the contract and server diffs: they match the spec, and the commit has no co-author line. My own rerun: 24 contract and 13 service tests pass, and lint and build are clean.
+
+Live checks on a fresh node:
+- The service binds to 127.0.0.1; the LAN IP (192.168.1.2:3001) is refused.
+- A preflight from https://evil.example gets no Access-Control-Allow-Origin; one from http://localhost:3000 gets it.
+- S1/S2/S1 gives 2 issued and 1 duplicate; a `|` in a field gives 400.
+- **Root-failure path (untested by the implementor):** deregistering Demo University 0.7 s into a 40-row sequential batch returned HTTP 200 with succeeded 15, failed 25, all 15 credential files and a rootError, and the out-file was written.
+
+Minor, no task: rootError carries ethers' short message ("could not coalesce error"), which is not friendly. The forgery screenshot in the report and slides predates the new badge wording; the captions now describe it correctly.
+
+Designer follow-ups done:
+- Report: pipe claim corrected; Table 1, gas table, test counts and threat table updated; limitations extended; the midsem 50–500-transaction range added.
+- Slides: "thousands", gas, test counts, forgery wording and future work updated.
+- Private guides updated.
+- Submission zip rebuilt from aed7459.

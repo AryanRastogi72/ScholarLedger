@@ -31,7 +31,7 @@
 \maketitle
 \begin{abstract}
 \noindent
-ScholarLedger is a decentralized application (DApp) in which universities issue academic credentials on an Ethereum chain and anyone can verify them without a wallet. It addresses three weaknesses of hash-anchoring credential systems. First, the forgery attack of Zonneveld et al.\ on Block.co: a hash on a chain proves integrity but not who anchored it. ScholarLedger binds issuance to an on-chain registry of institutions, so the contract itself reverts a credential sent from an unregistered wallet. Second, privacy on a public chain: the chain stores only a salted SHA-256 commitment, and the student keeps a credential file that opens it. Third, volume on graduation day: an off-chain batch service, inspired by Block-STM and by optimistic concurrent execution of smart contracts, groups rows by conflicts, submits each conflict-free group without waiting and confirms it in one block, then anchors one Merkle root per batch. On a local Hardhat node, 50 conflict-free credentials took 310\,ms in one block against 2505\,ms over 50 blocks sequentially (about $8.1\times$; repeat runs gave $7.2$--$8.7\times$). The system has 19 contract tests and 7 service tests, all passing, and all six manual MetaMask checks passed with the real extension. We state where the speedup comes from and what it does not show.
+ScholarLedger is a decentralized application (DApp) in which universities issue academic credentials on an Ethereum chain and anyone can verify them without a wallet. It addresses three weaknesses of hash-anchoring credential systems. First, the forgery attack of Zonneveld et al.\ on Block.co: a hash on a chain proves integrity but not who anchored it. ScholarLedger binds issuance to an on-chain registry of institutions, so the contract itself reverts a credential sent from an unregistered wallet. Second, privacy on a public chain: the chain stores only a salted SHA-256 commitment, and the student keeps a credential file that opens it. Third, volume on graduation day: an off-chain batch service, inspired by Block-STM and by optimistic concurrent execution of smart contracts, groups rows by conflicts, submits each conflict-free group without waiting and confirms it in one block, then anchors one Merkle root per batch. On a local Hardhat node, 50 conflict-free credentials took 310\,ms in one block against 2505\,ms over 50 blocks sequentially (about $8.1\times$; repeat runs gave $7.2$--$8.7\times$). The system has 24 contract tests and 13 service tests, all passing, and all six manual MetaMask checks passed with the real extension. An independent audit of the submission led to a final round of fixes, which we report with the limitations that remain. We state where the speedup comes from and what it does not show.
 \end{abstract}
 \vspace{10pt}
 ]
@@ -72,7 +72,7 @@ ScholarLedger is a decentralized application (DApp) in which universities issue 
 
 \textbf{Contributions.} We do not claim a new consensus protocol or a new cryptographic primitive. The contributions are a working system and its measurement:
 \begin{itemize}
-\item Identity-bound issuance: a registry contract plus a \texttt{require} on \texttt{msg.sender}, demonstrated against a side-by-side re-enactment of the Block.co attack.
+\item Identity-bound issuance: a registry contract plus a \texttt{require} on \texttt{msg.sender}, demonstrated against a side-by-side re-enactment of the Block.co attack, and a deregistration cutoff so that removing an institution does not void what it issued earlier.
 \item Privacy by commitment: only a salted SHA-256 commitment on chain, a holder-kept credential file, and a verifier that detects an edited file before any chain call.
 \item A concurrent batch engine with conflict graph, greedy grouping, validate-before-commit and one block per group, with a Merkle root, issuer and count recorded per batch.
 \item A measured comparison of sequential and grouped issuance, with the source of the speedup stated plainly.
@@ -94,11 +94,11 @@ ScholarLedger is a decentralized application (DApp) in which universities issue 
 Build a working credential DApp that (1) accepts credentials only from registered institutions, (2) stores no student data on the public chain, (3) lets anyone verify a credential for free and without a wallet, (4) lets only the original issuer revoke, and (5) issues large batches concurrently with conflict detection and one Merkle root per batch. Then measure what the batch engine gains over sequential issuance, and test every outcome end to end.
 
 \section{Proposed System}
-Figure~\ref{fig:arch} shows the architecture. Three programs run locally. A Hardhat node (chain ID 31337) holds two Solidity contracts. A React web app reads the chain directly for verification and asks MetaMask to sign registration, issuance and revocation. A Node.js batch service signs batch transactions with the demo university's key on the server, so no private key is ever sent from the browser.
+Figure~\ref{fig:arch} shows the architecture. Three programs run locally. A Hardhat node (chain ID 31337) holds two Solidity contracts. A React web app reads the chain directly for verification and asks MetaMask to sign registration, issuance and revocation. A Node.js batch service signs batch transactions with the demo university's key on the server, so no private key is ever sent from the browser. Because that service can sign as a university, it listens on the loopback interface only, accepts requests only from the web app's origin, and can require a bearer token.
 
 
 
-\textbf{Contracts.} \texttt{InstitutionRegistry} maps an address to a name, domain, registration time and active flag; only the deployer (the admin) can register or deregister. \texttt{CredentialManager} stores, per commitment, the issuer, the issue time and a revoked flag, and per batch a Merkle root, issuer, count and time. Table~\ref{tab:functions} lists the functions. No string about a student appears in storage or in any event.
+\textbf{Contracts.} \texttt{InstitutionRegistry} maps an address to a name, domain, registration time, active flag and a validity cutoff; only the deployer (the admin) can register or deregister, and a deregistered address can never be registered again. \texttt{CredentialManager} stores, per commitment, the issuer, the issue time and a revoked flag, and per batch a Merkle root, issuer, count and time. Table~\ref{tab:functions} lists the functions. No string about a student appears in storage or in any event.
 
 \begin{table}[!t]
 \caption{Contract functions, who may call them, and their checks.}
@@ -108,11 +108,11 @@ Figure~\ref{fig:arch} shows the architecture. Three programs run locally. A Hard
 \toprule
 function & caller & checks and effect\\
 \midrule
-\texttt{registerInstitution} & admin & not already active, name not empty; adds an issuer\\
-\texttt{revokeInstitution} & admin & must be active; deregisters\\
+\texttt{registerInstitution} & admin & non-zero address never registered before, name and domain not empty\\
+\texttt{revokeInstitution} & admin & must be active; sets a cutoff $\le$ now; credentials issued before it stay valid\\
 \texttt{issueCredential} & registered & sender registered, commitment non-zero and new; stores issuer, time\\
-\texttt{verifyCredential} & anyone (view) & valid = exists, not revoked, issuer still registered\\
-\texttt{revokeCredential} & original issuer & exists, not yet revoked\\
+\texttt{verifyCredential} & anyone (view) & valid = exists, not revoked, issued while the issuer was authorized\\
+\texttt{revokeCredential} & original issuer & still registered; exists, not yet revoked\\
 \texttt{storeMerkleRoot} & registered & root non-zero, $1\le$ count $<2^{32}$; returns a batch id\\
 \bottomrule
 \end{tabular}
@@ -127,14 +127,14 @@ function & caller & checks and effect\\
 \[
 \texttt{require(registry.isRegistered(msg.sender))}.
 \]
-Inside the EVM, \texttt{msg.sender} is recovered from the transaction's ECDSA signature, so a wallet cannot claim another's address. A forger's wallet is not in the registry, the call reverts with ``Issuer not registered'', and nothing is stored. Revocation checks that the caller is the stored issuer, and verification reports a credential as valid only while its issuer is still registered.
+Inside the EVM, \texttt{msg.sender} is recovered from the transaction's ECDSA signature, so a wallet cannot claim another's address. A forger's wallet is not in the registry, the call reverts with ``Issuer not registered'', and nothing is stored. Revocation checks that the caller is the stored issuer and is still registered. Deregistration takes a cutoff time: a university that closes passes the current time, and one whose key leaked passes the time of the leak. A credential is valid only if it was issued before its issuer's cutoff, so removing an institution neither voids its earlier graduates nor, because an address can never be re-registered, revives anything.
 
 \subsection{Commitments and the credential file}
 For each credential the issuer draws a 32-byte random salt $s$ and computes
 \begin{equation}
 c = \mathrm{SHA256}(s \,\|\, \texttt{|} \,\|\, \mathit{id} \,\|\, \texttt{|} \,\|\, \mathit{prog} \,\|\, \texttt{|} \,\|\, \mathit{meta}),
 \end{equation}
-where $\|$ is string concatenation, fields are trimmed, and the pipe separator stops \texttt{"ab"+"c"} and \texttt{"a"+"bc"} from colliding. Only $c$ goes on chain. The student receives a JSON file holding $s$, the fields, $c$, the issuer, the chain and contract, and, for batch credentials, a Merkle proof. The browser (WebCrypto) and the batch service (Node \texttt{crypto}) must agree; both test one fixed vector (64 zero characters, \texttt{S1}, \texttt{BTech}, empty metadata).
+where $\|$ is string concatenation and fields are trimmed. The pipe separates the fields, so it is forbidden inside them: the batch service, the Issue form and the verifier all reject a \texttt{|} in any field, which makes the split, and therefore the commitment, unambiguous. Only $c$ goes on chain. The student receives a JSON file holding $s$, the fields, $c$, the issuer, the chain and contract, and, for batch credentials, a Merkle proof. The browser (WebCrypto) and the batch service (Node \texttt{crypto}) must agree; both test one fixed vector (64 zero characters, \texttt{S1}, \texttt{BTech}, empty metadata).
 
 To verify a file, the page recomputes $c$ from the file. If it differs from the file's own commitment, the page reports ``Altered file'' and makes no chain call. Otherwise it calls \texttt{verifyCredential(c)} and shows one of five outcomes: valid, revoked, issuer deregistered, not found, or altered. Without the salt nobody can test guesses of student IDs against the public commitments.
 
@@ -154,7 +154,7 @@ The commitment cannot be the conflict key, because random salts make every commi
 
 \textbf{Validate before commit.} Before a row of a later group is sent, the service checks whether its key was already issued earlier in the same request; if so it aborts without sending (``Duplicate of an earlier row in this batch''). This is the optimistic validation step of OCC: optimistic grouping, validation, then commit or abort.
 
-\textbf{Nonces and one block per group.} An Ethereum account's transactions must carry consecutive nonces. The service reads the pending nonce once and hands out nonces itself, takes each nonce synchronously before any \texttt{await}, fetches fee data once, and sets a fixed gas limit (200{,}000; an issue uses about 61{,}000) so a reverted transaction still consumes its nonce and leaves no gap. On the local chain it turns Hardhat's automine off, submits every row of the group, mines one block, waits for all receipts, and turns automine back on in a \texttt{finally} block. Each row waits at most 30\,s for its receipt.
+\textbf{Nonces and one block per group.} An Ethereum account's transactions must carry consecutive nonces. The service reads the pending nonce once and hands out nonces itself, takes each nonce synchronously before any \texttt{await}, fetches fee data once, and sets a fixed gas limit (200{,}000; an issue uses about 59{,}000) so a reverted transaction still consumes its nonce and leaves no gap. On the local chain it turns Hardhat's automine off, submits every row of the group, mines one block, waits for all receipts, and turns automine back on in a \texttt{finally} block. Each row and the root transaction wait at most 30\,s for a receipt. A credential file is built as soon as its row confirms and all files are written to disk before the root is anchored, so a failure in the root step returns the files with an error instead of losing them (checked by deregistering the issuer in the middle of a 40-row batch: 15 rows confirmed and all 15 files came back). A request may hold at most 1{,}000 rows.
 
 \textbf{What this is and is not.} The EVM still executes the transactions of a block one after another. The gain comes from pipelining: a group's rows are submitted without waiting for each other and confirmed in one block, instead of one round trip and one block per row. True parallel execution inside the node is what Block-STM and Anjana et al.\ do; our midsem benchmark simulated that part.
 
@@ -196,7 +196,7 @@ B, grouped & 358 & 139.7 & 1 & $7.2\times$\\
 \textbf{What these show.} Grouping saves about $7$--$8\times$ on this machine (a third comparison run in the web app gave $8.7\times$). In a 30-row batch with 3 repeated students, the 27 valid rows were confirmed in one block and the 3 repeats were aborted before sending, in 279\,ms. The figures come from single runs on one machine and vary between runs. On a public chain the network decides block packing, so the shape, not these numbers, carries over.
 
 \subsection{Gas}
-Table~\ref{tab:gas} gives gas used from transaction receipts. Replacing an array of every commitment, kept only for its length, by a counter removed one storage write per issue (about 22{,}000 gas).
+Table~\ref{tab:gas} gives gas used from transaction receipts. Replacing an array of every commitment, kept only for its length, by a counter removed one storage write per issue (about 22{,}000 gas); making the registry reference \texttt{immutable} saved about 2{,}100 more. Deregistration support made \texttt{registerInstitution} and \texttt{revokeCredential} slightly more expensive.
 
 \begin{table}[!t]
 \caption{Gas used, from receipts on the local node.}
@@ -206,19 +206,21 @@ Table~\ref{tab:gas} gives gas used from transaction receipts. Replacing an array
 \toprule
 transaction & gas\\
 \midrule
-\texttt{issueCredential} (before counter change) & 82{,}857\\
-\texttt{issueCredential} (after) & 60{,}791\\
-\texttt{issueCredential}, first on a fresh contract & 77{,}891\\
-\texttt{registerInstitution} & 146{,}960\\
-\texttt{revokeCredential} & 29{,}387\\
+\texttt{issueCredential} (array, first version) & 82{,}857\\
+\texttt{issueCredential} (final) & 58{,}680\\
+\texttt{issueCredential}, first on a fresh contract & 75{,}780\\
+\texttt{storeMerkleRoot} (3 rows) & 98{,}515\\
+\texttt{registerInstitution} & 164{,}339\\
+\texttt{revokeInstitution} (deregister) & 31{,}913\\
+\texttt{revokeCredential} & 35{,}543\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Correctness and end-to-end checks}
-Automated tests: 19 contract tests (Mocha and Chai, run by \texttt{npx hardhat test}) cover access control, the forgery rejection, duplicate rejection, revocation rules, the batch limits, that \texttt{CredentialIssued} has three inputs and none is a string, and the commitment test vector. Seven batch-service tests (\texttt{node:test}) cover grouping of duplicates, Merkle proofs for every leaf of trees with 1, 2, 3, 5, 6 and 7 leaves, root change on a changed leaf, timing fields, and rejection of an unknown mode. All pass.
+Automated tests: 24 contract tests (Mocha and Chai, run by \texttt{npm test}) cover access control, the forgery rejection, duplicate rejection, revocation rules, input validation, the deregistration cutoff, the batch limits, that \texttt{CredentialIssued} has three inputs and none is a string, and the commitment test vector. Thirteen batch-service tests (\texttt{node:test}) cover grouping of duplicates, Merkle proofs for every leaf of trees with 1, 2, 3, 5, 6 and 7 leaves, root change on a changed leaf, timing fields, an unknown mode, the pipe character, the row limit, the token check and a foreign browser origin. All pass.
 
-Table~\ref{tab:manual} lists the manual checks run with the real MetaMask extension against a fresh deployment, every transaction on chain 31337.
+Table~\ref{tab:manual} lists the manual checks run with the real MetaMask extension against a fresh deployment, every transaction on chain 31337. They were run before the final audit fixes; the changed contract rules are covered by the automated tests.
 
 \begin{table}[!t]
 \caption{Manual checks with MetaMask (account \#0 admin, \#1 Demo University, \#2 unregistered). All passed.}
@@ -241,7 +243,7 @@ Wallet on another network & -- & warning chip ``expected 31337''\\
 \begin{figure}[!t]
 \centering
 \includegraphics[width=\columnwidth]{figures/forgery.png}
-\caption{Forgery demo with the same forged hash. Left: a simulated hash-only system accepts it. Right: a real transaction from an unregistered wallet, reverted by the contract.}
+\caption{Forgery demo with the same forged hash. Left: a simulated hash-only system accepts it. Right: the same call from an unregistered wallet; the wallet simulates it first, the contract refuses it, and nothing is broadcast.}
 \label{fig:forgery}
 \end{figure}
 
@@ -254,7 +256,7 @@ Wallet on another network & -- & warning chip ``expected 31337''\\
 
 \subsection{Midsem concurrency benchmark}
 \label{sec:results-midsem}
-Tables~\ref{tab:threads} and \ref{tab:conflict} summarise the C++ benchmark (30 measured runs after 3 warm-ups; medians). With one worker the STM machinery is slower than serial; from four workers on both miner and validator gain, best at 16 workers (oversubscribed on 12 hardware threads). Raising the share of conflicting transactions from 10\% to 90\% multiplied the conflict-graph edges from 30 to 270 but left the longest dependency path at 4--5 and the speedup near $3.8$--$3.9\times$: duplicates fail their checks and verification mostly reads, so more conflicts did not create long chains of dependent writes.
+Tables~\ref{tab:threads} and \ref{tab:conflict} summarise the C++ benchmark (30 measured runs after 3 warm-ups; medians). Varying the batch from 50 to 500 transactions at 25\% conflict with 8 or 16 workers gave miner speedups of $2.6$--$4.0\times$ and validator speedups of $2.7$--$4.3\times$, growing with batch size. With one worker the STM machinery is slower than serial; from four workers on both miner and validator gain, best at 16 workers (oversubscribed on 12 hardware threads). Raising the share of conflicting transactions from 10\% to 90\% multiplied the conflict-graph edges from 30 to 270 but left the longest dependency path at 4--5 and the speedup near $3.8$--$3.9\times$: duplicates fail their checks and verification mostly reads, so more conflicts did not create long chains of dependent writes.
 
 \begin{table}[!t]
 \caption{Midsem C++ benchmark, varying workers (100 transactions, 25\% conflict). Speedup is serial median over concurrent median.}
@@ -298,12 +300,16 @@ Table~\ref{tab:security} checks the security properties against the code.
 threat & mitigation & status\\
 \midrule
 Forged issuance & registry check on \texttt{msg.sender} & done\\
+Open batch endpoint signing as a university & loopback bind, origin allow-list, optional token & done (local)\\
+Files lost if a batch fails late & files saved before anchoring and always returned & done\\
+Deregistration voiding old credentials & validity cutoff; no re-registration & done\\
 Student data exposure & salted commitment only; file with holder & done\\
 Edited credential file & commitment recomputed before any chain call & done\\
 Unauthorized revocation & only the stored issuer & done\\
 Duplicate commitment & rejected by the contract & done\\
 Duplicate student across batches & not detectable on chain & limitation\\
 Admin key compromise & single admin key, no multisig & limitation\\
+Another institution squatting a commitment & credentials keyed by commitment only & limitation\\
 Private key in browser & batch key held server-side & done (local)\\
 \bottomrule
 \end{tabular}
@@ -312,9 +318,9 @@ Private key in browser & batch key held server-side & done (local)\\
 \section{Conclusions and Limitations}
 ScholarLedger shows that a credential DApp can close the Block.co forgery attack at the contract level, keep every student detail off a public chain, and issue large batches several times faster by grouping conflict-free rows and confirming each group in one block. The forgery is rejected by the network itself, verification is free and needs no wallet, and every outcome is visible in the web app and covered by automated or manual tests.
 
-\textbf{Limitations.} (1) The speedup is measured on a local Hardhat node where we control block production; it comes from pipelining submissions, not from parallel execution inside the EVM, and the numbers are from single runs on one laptop. (2) The admin is one key, and vetting institutions remains a trust decision. (3) The contract cannot detect the same student issued twice with different salts; the service only dedupes within a batch. (4) A credential file reveals all of its fields; there is no selective disclosure. (5) The batch service signs with a key held by the server, acceptable only for a local demonstration. (6) We have not deployed to a public testnet or measured low-power hardware.
+\textbf{Limitations.} (1) The speedup is measured on a local Hardhat node where we control block production; it comes from pipelining submissions, not from parallel execution inside the EVM, and the numbers are from single runs on one laptop. (2) The admin is one key, and vetting institutions remains a trust decision. (3) The contract cannot detect the same student issued twice with different salts; the service only dedupes within a batch. (4) A credential file reveals all of its fields; there is no selective disclosure. (5) The batch service signs with a key held by the server; binding it to the loopback interface makes it acceptable for a local demonstration only, and institution-signed batches are the real fix. (6) Credentials are keyed by commitment alone, so a registered institution that front-runs another's commitment becomes its recorded issuer. (7) The Merkle tree duplicates the last node of odd levels and does not separate leaf and node hashes; the verifier also requires the leaf to exist as a credential. (8) We have not deployed to a public testnet or measured low-power hardware, and the local chain is in memory, so it is wiped on restart.
 
-\textbf{Future work.} Deploy to the Sepolia testnet and measure real gas and latency; replace the admin with a multisig or a consortium of accreditation bodies; add zero-knowledge selective disclosure following Saramago et al.; detect cross-batch duplicates with an issuer-keyed tag; let institutions sign batches with their own wallets; and compare with Block-STM-style parallel execution inside the node.
+\textbf{Future work.} Deploy to the Sepolia testnet and measure real gas and latency; replace the admin with a multisig or a consortium of accreditation bodies; add zero-knowledge selective disclosure following Saramago et al.; detect cross-batch duplicates with an issuer-keyed tag; let institutions sign batches with their own wallets (an EIP-712 signature over the Merkle root, checked with \texttt{ecrecover}); key credentials by issuer and commitment; and compare with Block-STM-style parallel execution inside the node.
 
 \begin{thebibliography}{99}\footnotesize
 \bibitem{zonneveld2026} Zonneveld, G., Rafaiani, G. and Baldi, M., 2026. A forgery attack on the Block.co blockchain-based digital credential certification system. \textit{arXiv:2606.31462}.
