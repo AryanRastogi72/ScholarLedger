@@ -686,3 +686,126 @@ Designer follow-ups done:
 - Slides: "thousands", gas, test counts, forgery wording and future work updated.
 - Private guides updated.
 - Submission zip rebuilt from aed7459.
+
+---
+
+## Task 12: Multi-admin approval for the registry (2 of 3)
+
+Status: done
+
+**Why:** the registry has a single admin key, so one person (or one stolen key) decides who counts as a university. This is the main "is your system centralized?" weakness. The user chose built-in k-of-n approval inside `InstitutionRegistry`, with no external Safe contracts.
+
+**Rules:**
+- No `Co-Authored-By` or "Generated with" lines in the commit.
+- `git pull` first.
+- Do not touch the report, slides, zip or study guides.
+- Commit locally as `task 12: multi-admin approval`. **Do not push**: the user approves pushes separately.
+
+### Contract: `InstitutionRegistry.sol`
+
+Replace the single `admin` and `onlyAdmin` with a fixed admin set and a threshold, plus proposals.
+
+```solidity
+address[] public admins;                  // fixed at deployment
+mapping(address => bool) public isAdmin;
+uint8 public immutable threshold;
+
+enum Kind { Register, Deregister }
+struct Proposal {
+    Kind kind;
+    address target;
+    string name;          // Register only
+    string domain;        // Register only
+    uint64 validUntil;    // Deregister only
+    uint8 approvals;
+    bool executed;
+}
+Proposal[] public proposals;
+mapping(uint256 => mapping(address => bool)) public hasApproved;
+
+event ProposalCreated(uint256 indexed id, Kind kind, address indexed target, address indexed proposer);
+event ProposalApproved(uint256 indexed id, address indexed admin, uint8 approvals);
+// existing InstitutionRegistered / InstitutionRevoked are emitted when a proposal executes
+
+constructor(address[] memory _admins, uint8 _threshold)
+  // require 1 <= _threshold <= _admins.length; no zero address; no duplicates
+function proposeRegister(address instAddress, string calldata name, string calldata domain) external onlyAdmin returns (uint256 id)
+function proposeDeregister(address addr, uint64 validUntil) external onlyAdmin returns (uint256 id)
+function approve(uint256 id) external onlyAdmin
+function getAdmins() external view returns (address[] memory)
+function getProposalCount() external view returns (uint256)
+```
+
+Behaviour:
+- `onlyAdmin` → `require(isAdmin[msg.sender], "Not an admin")`.
+- **Propose:** validates the same inputs as today, at proposal time, so a bad proposal fails fast:
+  - register: non-zero address, non-empty name and domain, never registered before;
+  - deregister: target active, `validUntil <= block.timestamp`.
+
+  It stores the proposal, counts the proposer's approval (`hasApproved[id][msg.sender] = true`, approvals = 1) and emits `ProposalCreated` and `ProposalApproved`. If `threshold == 1`, it executes at once.
+- **Approve:** requires `id < proposals.length`, not executed (`"Already executed"`), and not already approved by this admin (`"Already approved"`). It increments approvals, emits `ProposalApproved`, and executes when `approvals >= threshold`.
+- **Execute** (internal): re-checks the conditions, because the state may have changed since the proposal. Two proposals for the same address: the second reverts with "Address was registered before"; a deregister of an inactive institution reverts with "Not registered". Then it applies exactly today's register / deregister logic and events, and sets `executed = true`.
+- Unchanged: `institutions`, `isRegistered`, `issuedWhileAuthorized`, `registeredAddresses`, `getInstitutionCount`, `getInstitutionAt`. `CredentialManager` is unchanged.
+- Remove `registerInstitution`, `revokeInstitution` and `admin`. Their only callers are `scripts/deploy.js`, `Register.jsx` and the tests; update all three.
+- **Out of scope** (state it as a limitation in your notes): changing the admin set after deployment.
+
+### Deploy (`scripts/deploy.js`)
+
+- **Local chain (31337):** admins = Hardhat accounts **#0, #3, #4**, threshold **2**. Then register Demo University (#1): #0 proposes, #3 approves. Log the admins and threshold.
+- **Other chains:** read `ADMIN_ADDRESSES` (comma-separated) and `ADMIN_THRESHOLD` from the environment; exit with an error if they are missing.
+
+### Frontend: `Register.jsx` (and `errors.js`)
+
+- **Header line:** "Admin actions need **2 of 3** admins to approve", read from `threshold()` and `getAdmins()`. List the admin addresses (shortened, copyable).
+- **Two propose forms** (keep the existing validation):
+  - **Propose registration:** address, name, domain.
+  - **Propose deregistration:** address, valid-until (default now).
+- **Proposals list**, newest first:
+  - Columns: kind, target (shortened), name and domain or valid-until, `approvals / threshold`, and which admins approved.
+  - Status: *Waiting* or *Done*. An open proposal whose execution would now fail can't be predicted cheaply, so leave it as *Waiting*.
+  - An **Approve** button, enabled only if the connected wallet is an admin, hasn't approved, and the proposal isn't executed. After approval, refresh the list; if it executed, say so ("Approved and executed: Second University is now registered").
+- **Non-admin wallet:** the forms and buttons are disabled, with the note "Connect an admin wallet to propose or approve." Reading works without a wallet (read provider).
+- **`errors.js`:** map "Not an admin", "Already approved", "Already executed", "Address was registered before", "Zero address", "Domain required" and "validUntil in the future" to plain English. Remove the old "Only admin" mapping.
+- **Home:** step 1 text "The admin adds a university wallet…" → "Two of three admins approve adding a university wallet…". Check the IdentityDiagram copy needs no change.
+
+### Tests (`test/ScholarLedger.test.js`)
+
+Add a helper `register(addr, name, domain)` that proposes with admin A and approves with admin B. Update every existing test that registered or deregistered directly, and keep all existing assertions.
+
+New tests:
+1. The constructor rejects threshold 0, threshold > admins, a zero admin and a duplicate admin.
+2. A non-admin can't propose or approve ("Not an admin").
+3. After one approval the institution is **not** registered; after the second it is, and `InstitutionRegistered` is emitted on the approving transaction.
+4. The same admin approving twice reverts "Already approved"; approving an executed proposal reverts "Already executed".
+5. Two register proposals for one address: the first executes, the second's final approval reverts "Address was registered before".
+6. A deregister proposal with a cutoff executes on the second approval, and the existing cutoff behaviour still holds.
+7. With threshold 1 (a separate deployment in the test), a proposal executes immediately.
+
+### README
+
+- MetaMask setup: also import **#3** (a second admin). Hardhat prints its key; the key is `0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6`. Check it against the node's output before writing it.
+- Demo: register Second University = #0 proposes, switch to #3, approve.
+- In Known limitations, replace "single admin key" with "admin set fixed at deployment (2 of 3 on the local chain); no admin rotation".
+
+### Acceptance
+
+1. Root `npm test` passes (24 existing, adapted, plus the new ones); batch-service `npm test` passes; frontend `npm run lint` exits 0 and `vite build` is clean.
+2. **Live** (fresh node, deploy, service, frontend, stand-in wallet or MetaMask):
+   - Deploy logs 3 admins, threshold 2, and Demo University registered.
+   - As #0, propose registering #2 → "1 / 2" in the list, and #2 is **not** registered (the forgery demo as #2 is still rejected).
+   - As #3, approve → executed, and #2 is registered.
+   - As #2 (non-admin), the Register page forms are disabled.
+   - Deregister via propose + approve with cutoff now: earlier credentials stay Valid.
+3. Report the gas for `proposeRegister`, `approve` (executing) and `proposeDeregister` in your notes, plus the new deploy gas of the registry.
+4. Append notes and "Status: done" under Task 12, copy the root `DESIGN.md` over `ScholarLedger/DESIGN.md`, commit locally (no co-author line), **don't push**, and message the designer.
+
+**Implementor notes (Task 12):** Status: done (local commit `task 12: multi-admin approval`, no trailers, not pushed)
+- Contract as specified: fixed admin set, `threshold` immutable, proposals with `proposeRegister` / `proposeDeregister` / `approve`, the proposer counts as the first approval, execution on reaching the threshold with the conditions re-checked, `InstitutionRegistered` / `InstitutionRevoked` emitted on execution, `getAdmins`, `getProposalCount`. `registerInstitution`, `revokeInstitution` and `admin` are removed. `CredentialManager` is unchanged. One deliberate simplification: I dropped the separate "Already registered" check, so registering an address that is active or was deregistered both revert with "Address was registered before" (matches test 5 in the spec). Also added "No such proposal" for an out-of-range id.
+- Deploy: local chain uses admins #0, #3, #4 with threshold 2, then #0 proposes and #3 approves Demo University (#1); logs the admins and threshold. Other chains read `ADMIN_ADDRESSES` / `ADMIN_THRESHOLD` and throw if missing.
+- Tests: 31 passing (24 adapted, plus 7 new, one per item in the spec; a `register`/`deregister` helper does propose by A, approve by B). The "Should reject duplicate registration" test now expects "Address was registered before".
+- Register page: header "Admin actions need N of M admins to approve", admin list (shortened, copyable, "you" marker), propose-registration and propose-deregistration forms, proposals table (newest first: kind, target, name/domain or valid-until, approvals / threshold, who approved, Done or Waiting plus an Approve button), non-admin wallets get disabled forms (`fieldset disabled`) and the note "Connect an admin wallet to propose or approve." Everything is read through the read provider. After an approval the list is reloaded and the note says "Approved and executed: Second University is now registered." (or the deregistration equivalent). `errors.js`: "Only admin" mapping removed; "Not an admin", "Already approved", "Already executed", "No such proposal" added (the older ones from Task 11 stay). Home step 1 now says two of three admins approve. The identity diagram needs no change. The Deregister form from Task 11 became the propose-deregistration form; its default valid-until now has second precision (a minute-precision default fell before credentials issued within that minute and made them show as "Issuer deregistered").
+- Live check (fresh node, deploy, service, preview build, stand-in wallets): deploy logged the 3 admins, threshold 2 and Demo University. As #0, proposing Second University (#2) gave "1 / 2" and Waiting. As #2 the forms were disabled (2 disabled fieldsets, note shown, Approve disabled). As #3, Approve executed it ("Approved and executed: Second University is now registered", Done). Forgery demo from an unregistered wallet (#5) was still refused. Deregistration by propose (#0) plus approve (#3) with cutoff now: the credential issued earlier stays "Valid" in the Ledger. The Approve button is disabled for a wallet that already approved. Not exercised: the forgery demo as #2 specifically before approval (I used #5, which is equally unregistered), and the "Already approved" revert from the UI because the button is disabled.
+- README: MetaMask setup now also imports #3 (key checked against the node's printed key: it matches the one in the spec), a demo paragraph for registering a second university, ADMIN_* env vars, Known limitations replaced with "admin set fixed at deployment (2 of 3 on the local chain); no admin rotation", deregistration paragraph rewritten, 31 tests.
+- Gas (unoptimised Hardhat): registry deploy 2,611,883 (it was 1,444,388 before; the proposal and admin code roughly doubles it); `proposeRegister` 171,285 for the very first proposal and 154,173 for later ones (the UI run); `approve` that executes a registration 206,020 (188,932 in the UI run); `proposeDeregister` 112,352; `approve` that executes a deregistration 68,230. Script runs and UI runs differ a little because the first write to the proposals array costs more.
+- Out of scope, as stated: changing the admin set after deployment (limitation in the README). Not done: `CODE_GUIDE.md` (told not to touch guides) is stale on the registry and the Register page.
+- Checks: hardhat 31 passing, batch-service 13 pass, `npm run lint` exit 0, `vite build` clean.

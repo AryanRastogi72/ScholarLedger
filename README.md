@@ -20,7 +20,7 @@ Existing blockchain-based credential systems anchor a document hash on-chain but
 
 | Feature | Description |
 |---------|-------------|
-| 🔐 **Identity-Bound Issuance** | Only admin-whitelisted institution EOAs can issue credentials on-chain |
+| 🔐 **Identity-Bound Issuance** | Only institution addresses approved by 2 of 3 admins can issue credentials on-chain |
 | ⛓️ **Salted Commitments** | Only a salted SHA-256 commitment is anchored; student details stay in a credential file held by the student |
 | ⚡ **OCC Batch Processing** | Conflict-graph analysis + back-to-back submission of non-conflicting transactions |
 | 🌳 **Merkle Tree Anchoring** | Each batch computes a SHA-256 Merkle root stored on-chain for integrity auditing |
@@ -77,7 +77,7 @@ npx hardhat node
 cd ScholarLedger
 npx hardhat run scripts/deploy.js --network localhost
 ```
-On the local chain (31337) the deploy script also registers Hardhat Account #1 as **Demo University**, so issuing works right away.
+On the local chain (31337) the deploy script sets the admins to Hardhat accounts #0, #3 and #4 with a threshold of 2, then registers Hardhat Account #1 as **Demo University** (#0 proposes, #3 approves), so issuing works right away. On any other chain set `ADMIN_ADDRESSES` (comma-separated) and `ADMIN_THRESHOLD`; the script stops if they are missing.
 
 ### Terminal 3 — Start Batch Service
 ```bash
@@ -102,12 +102,16 @@ Open **http://localhost:3000** in your browser.
    - **RPC URL:** `http://127.0.0.1:8545`
    - **Chain ID:** `31337`
    - **Currency:** `ETH`
-2. Import Hardhat Account #0 (the admin/deployer, used on `/register`):
+2. Import Hardhat Account #0 (the first admin, used on `/register`):
    - Private key: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
+   Also import Hardhat Account #3 (the second admin, to approve proposals):
+   - Private key: `0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6`
 3. Import Hardhat Account #1 (the Demo University issuer, used on `/issue` and `/revoke`):
    - Private key: `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`
 
 These are the public Hardhat development keys. Never use them on a real network.
+
+**Demo: registering a second university.** On `/register` as #0, propose registering another address (for example Hardhat #2) with a name and domain. The proposal shows 1 / 2. Switch MetaMask to #3 and press Approve: the second approval executes it and the address becomes a registered institution.
 
 `/verify`, `/explorer` and `/` read from the node directly and need no wallet.
 
@@ -121,12 +125,12 @@ The chain stores only a salted commitment, the issuer, a timestamp and a revoked
 ```
 ScholarLedger/
 ├── contracts/
-│   ├── InstitutionRegistry.sol   # Identity registry (admin-only registration)
+│   ├── InstitutionRegistry.sol   # Identity registry (2-of-3 admin approval)
 │   └── CredentialManager.sol     # Credential issuance, verification, revocation
 ├── scripts/
 │   └── deploy.js                 # Deploys contracts + exports ABIs to frontend
 ├── test/
-│   └── ScholarLedger.test.js       # 24 unit tests (forgery prevention, access control, deregistration, commitments, batches)
+│   └── ScholarLedger.test.js       # 31 unit tests (forgery prevention, access control, deregistration, commitments, batches)
 ├── batch-service/
 │   ├── server.js                 # Express API (POST /api/batch/issue, /analyze)
 │   ├── occEngine.js              # OCC conflict detection + parallel grouping
@@ -174,14 +178,14 @@ If the batch service is killed in the middle of a group, the node may be left wi
 
 ### Deregistration
 
-The admin can deregister an institution with a "valid until" time (`revokeInstitution(addr, validUntil)`). Credentials issued before that time stay valid, later ones stop verifying, and a deregistered key can no longer revoke. A deregistered address can never be registered again; an institution that lost its key registers a new address.
+Adding or removing an institution is a proposal that needs approval from 2 of the 3 admins (`proposeRegister` / `proposeDeregister`, then `approve`; the proposer counts as the first approval, and the change runs on the second). The admins and the threshold are fixed at deployment. A deregistration carries a "valid until" time. Credentials issued before that time stay valid, later ones stop verifying, and a deregistered key can no longer revoke. A deregistered address can never be registered again; an institution that lost its key registers a new address.
 
 ---
 
 ## Known limitations
 
 - The batch service is local-only and holds the issuer key. Letting institutions sign their own batches is future work.
-- There is a single admin key for the registry.
+- The admin set is fixed at deployment (2 of 3 on the local chain); there is no admin rotation.
 - The chain is an in-memory Hardhat node; nothing here is deployed to a public network.
 - Duplicates across batches are not detected: the contract only sees salted commitments, so issuers dedupe off-chain.
 - The Merkle tree duplicates the last node on odd levels and has no domain separation between leaves and inner nodes.

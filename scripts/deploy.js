@@ -5,9 +5,26 @@ const path = require("path");
 async function main() {
   console.log("Starting deployment...");
 
+  // Admins and threshold: Hardhat accounts #0, #3, #4 with 2-of-3 on the local chain, from the environment elsewhere
+  const signers = await hre.ethers.getSigners();
+  const local = (await hre.ethers.provider.getNetwork()).chainId === 31337n;
+  let admins;
+  let threshold;
+  if (local) {
+    admins = [signers[0].address, signers[3].address, signers[4].address];
+    threshold = 2;
+  } else {
+    if (!process.env.ADMIN_ADDRESSES || !process.env.ADMIN_THRESHOLD) {
+      throw new Error("Set ADMIN_ADDRESSES (comma-separated) and ADMIN_THRESHOLD for this network");
+    }
+    admins = process.env.ADMIN_ADDRESSES.split(",").map((a) => a.trim());
+    threshold = Number(process.env.ADMIN_THRESHOLD);
+  }
+  console.log(`Admins: ${admins.join(", ")} (threshold ${threshold})`);
+
   // Deploy InstitutionRegistry
   const InstitutionRegistry = await hre.ethers.getContractFactory("InstitutionRegistry");
-  const registry = await InstitutionRegistry.deploy();
+  const registry = await InstitutionRegistry.deploy(admins, threshold);
   await registry.waitForDeployment();
   const registryAddress = await registry.getAddress();
   console.log(`InstitutionRegistry deployed to: ${registryAddress}`);
@@ -46,9 +63,11 @@ async function main() {
     fs.copyFileSync(managerArtifact, path.join(frontendDir, "CredentialManager.json"));
   }
 
-  if ((await hre.ethers.provider.getNetwork()).chainId === 31337n) {
-    const issuer = (await hre.ethers.getSigners())[1];
-    await (await registry.registerInstitution(issuer.address, "Demo University", "demo.edu")).wait();
+  if (local) {
+    // #0 proposes, #3 approves: the 2-of-3 threshold is met
+    const issuer = signers[1];
+    await (await registry.connect(signers[0]).proposeRegister(issuer.address, "Demo University", "demo.edu")).wait();
+    await (await registry.connect(signers[3]).approve(0)).wait();
     console.log(`Registered Demo University issuer: ${issuer.address}`);
   }
 

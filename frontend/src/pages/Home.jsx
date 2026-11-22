@@ -94,7 +94,7 @@ function Home() {
       <section aria-labelledby="how">
         <h2 id="how">How it works</h2>
         <ol className="band">
-          <li><strong>Register the issuer</strong><span>The admin adds a university wallet to the on-chain registry, with its name and domain.</span></li>
+          <li><strong>Register the issuer</strong><span>Two of three admins approve adding a university wallet to the on-chain registry, with its name and domain.</span></li>
           <li><strong>Issue a commitment</strong><span>The university hashes the student details with a random salt and sends only that commitment. The student gets a credential file.</span></li>
           <li><strong>Verify the file</strong><span>Anyone uploads the file. The page recomputes the commitment, checks it on the chain, and shows who issued it. No wallet needed.</span></li>
         </ol>

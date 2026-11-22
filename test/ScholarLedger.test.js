@@ -4,14 +4,25 @@ const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("ScholarLedger Contracts", function () {
   let InstitutionRegistry, registry, CredentialManager, manager;
-  let admin, institution1, institution2, student;
+  let admin, institution1, institution2, adminB, adminC, outsider;
+  let register, deregister;
 
   beforeEach(async function () {
-    [admin, institution1, institution2, student] = await ethers.getSigners();
+    [admin, institution1, institution2, adminB, adminC, outsider] = await ethers.getSigners();
 
     InstitutionRegistry = await ethers.getContractFactory("InstitutionRegistry");
-    registry = await InstitutionRegistry.deploy();
+    registry = await InstitutionRegistry.deploy([admin.address, adminB.address, adminC.address], 2);
     await registry.waitForDeployment();
+
+    // Admin A proposes, admin B approves: the 2-of-3 threshold is met and the change executes.
+    register = async (addr, name, domain) => {
+      await registry.connect(admin).proposeRegister(addr, name, domain);
+      await registry.connect(adminB).approve((await registry.getProposalCount()) - 1n);
+    };
+    deregister = async (addr, validUntil) => {
+      await registry.connect(admin).proposeDeregister(addr, validUntil);
+      await registry.connect(adminB).approve((await registry.getProposalCount()) - 1n);
+    };
 
     CredentialManager = await ethers.getContractFactory("CredentialManager");
     manager = await CredentialManager.deploy(await registry.getAddress());
@@ -19,58 +30,127 @@ describe("ScholarLedger Contracts", function () {
   });
 
   describe("InstitutionRegistry", function () {
-    it("Should set admin on deployment", async function () {
-      expect(await registry.admin()).to.equal(admin.address);
+    it("Should set the admins and threshold on deployment", async function () {
+      expect(await registry.getAdmins()).to.deep.equal([admin.address, adminB.address, adminC.address]);
+      expect(await registry.threshold()).to.equal(2n);
+      expect(await registry.isAdmin(adminC.address)).to.be.true;
+      expect(await registry.isAdmin(outsider.address)).to.be.false;
     });
 
     it("Should register an institution", async function () {
-      await registry.registerInstitution(institution1.address, "State University", "state.edu");
+      await register(institution1.address, "State University", "state.edu");
       expect(await registry.isRegistered(institution1.address)).to.be.true;
     });
 
     it("Should reject duplicate registration", async function () {
-      await registry.registerInstitution(institution1.address, "State University", "state.edu");
+      await register(institution1.address, "State University", "state.edu");
       await expect(
-        registry.registerInstitution(institution1.address, "State University", "state.edu")
-      ).to.be.revertedWith("Already registered");
+        registry.proposeRegister(institution1.address, "State University", "state.edu")
+      ).to.be.revertedWith("Address was registered before");
     });
 
-    it("Should reject registration from non-admin", async function () {
+    it("Should reject a proposal from a non-admin", async function () {
       await expect(
-        registry.connect(institution1).registerInstitution(institution2.address, "Tech Institute", "tech.edu")
-      ).to.be.revertedWith("Only admin can perform this action");
+        registry.connect(institution1).proposeRegister(institution2.address, "Tech Institute", "tech.edu")
+      ).to.be.revertedWith("Not an admin");
     });
 
     it("Should check isRegistered", async function () {
       expect(await registry.isRegistered(institution1.address)).to.be.false;
-      await registry.registerInstitution(institution1.address, "State University", "state.edu");
+      await register(institution1.address, "State University", "state.edu");
       expect(await registry.isRegistered(institution1.address)).to.be.true;
     });
 
     it("Should revoke an institution", async function () {
-      await registry.registerInstitution(institution1.address, "State University", "state.edu");
-      await registry.revokeInstitution(institution1.address, await time.latest());
+      await register(institution1.address, "State University", "state.edu");
+      await deregister(institution1.address, await time.latest());
       expect(await registry.isRegistered(institution1.address)).to.be.false;
     });
 
     it("Should reject the zero address and an empty domain", async function () {
-      await expect(registry.registerInstitution(ethers.ZeroAddress, "X", "x.edu")).to.be.revertedWith("Zero address");
-      await expect(registry.registerInstitution(institution1.address, "X", "")).to.be.revertedWith("Domain required");
+      await expect(registry.proposeRegister(ethers.ZeroAddress, "X", "x.edu")).to.be.revertedWith("Zero address");
+      await expect(registry.proposeRegister(institution1.address, "X", "")).to.be.revertedWith("Domain required");
     });
 
     it("Should never let a deregistered address register again", async function () {
-      await registry.registerInstitution(institution1.address, "State University", "state.edu");
-      await registry.revokeInstitution(institution1.address, await time.latest());
+      await register(institution1.address, "State University", "state.edu");
+      await deregister(institution1.address, await time.latest());
       await expect(
-        registry.registerInstitution(institution1.address, "State University", "state.edu")
+        registry.proposeRegister(institution1.address, "State University", "state.edu")
       ).to.be.revertedWith("Address was registered before");
     });
 
     it("Should reject a validUntil in the future", async function () {
-      await registry.registerInstitution(institution1.address, "State University", "state.edu");
+      await register(institution1.address, "State University", "state.edu");
       await expect(
-        registry.revokeInstitution(institution1.address, (await time.latest()) + 1000)
+        registry.proposeDeregister(institution1.address, (await time.latest()) + 1000)
       ).to.be.revertedWith("validUntil in the future");
+    });
+  });
+
+  describe("Multi-admin approval", function () {
+    const deployRegistry = (admins, threshold) =>
+      ethers.getContractFactory("InstitutionRegistry").then((f) => f.deploy(admins, threshold));
+
+    it("The constructor rejects a bad threshold, a zero admin and a duplicate admin", async function () {
+      const a = [admin.address, adminB.address, adminC.address];
+      await expect(deployRegistry(a, 0)).to.be.revertedWith("Bad threshold");
+      await expect(deployRegistry(a, 4)).to.be.revertedWith("Bad threshold");
+      await expect(deployRegistry([admin.address, ethers.ZeroAddress], 1)).to.be.revertedWith("Zero admin");
+      await expect(deployRegistry([admin.address, admin.address], 1)).to.be.revertedWith("Duplicate admin");
+    });
+
+    it("A non-admin cannot propose or approve", async function () {
+      await expect(registry.connect(outsider).proposeRegister(institution1.address, "S", "s.edu")).to.be.revertedWith("Not an admin");
+      await expect(registry.connect(outsider).proposeDeregister(institution1.address, 0)).to.be.revertedWith("Not an admin");
+      await registry.connect(admin).proposeRegister(institution1.address, "S", "s.edu");
+      await expect(registry.connect(outsider).approve(0)).to.be.revertedWith("Not an admin");
+    });
+
+    it("Registers only after the second approval, which emits InstitutionRegistered", async function () {
+      await registry.connect(admin).proposeRegister(institution1.address, "State University", "state.edu");
+      expect(await registry.isRegistered(institution1.address)).to.be.false;
+      expect((await registry.proposals(0)).approvals).to.equal(1n);
+      await expect(registry.connect(adminC).approve(0))
+        .to.emit(registry, "InstitutionRegistered").withArgs(institution1.address, "State University", "state.edu");
+      expect(await registry.isRegistered(institution1.address)).to.be.true;
+      expect((await registry.proposals(0)).executed).to.be.true;
+    });
+
+    it("The same admin cannot approve twice, and an executed proposal cannot be approved", async function () {
+      await registry.connect(admin).proposeRegister(institution1.address, "S", "s.edu");
+      await expect(registry.connect(admin).approve(0)).to.be.revertedWith("Already approved");
+      await registry.connect(adminB).approve(0);
+      await expect(registry.connect(adminC).approve(0)).to.be.revertedWith("Already executed");
+      await expect(registry.connect(adminC).approve(99)).to.be.revertedWith("No such proposal");
+    });
+
+    it("Two proposals for one address: the second fails when it would execute", async function () {
+      await registry.connect(admin).proposeRegister(institution1.address, "First", "first.edu");
+      await registry.connect(adminB).proposeRegister(institution1.address, "Second", "second.edu");
+      await registry.connect(adminC).approve(0); // first executes
+      await expect(registry.connect(adminC).approve(1)).to.be.revertedWith("Address was registered before");
+      expect((await registry.institutions(institution1.address)).name).to.equal("First");
+    });
+
+    it("A deregister proposal executes on the second approval and keeps the cutoff behaviour", async function () {
+      await register(institution1.address, "State University", "state.edu");
+      const manager2 = await (await ethers.getContractFactory("CredentialManager")).deploy(await registry.getAddress());
+      const early = ethers.keccak256(ethers.toUtf8Bytes("early2"));
+      await manager2.connect(institution1).issueCredential(early);
+      await time.increase(10);
+      const cutoff = await time.latest();
+      await registry.connect(admin).proposeDeregister(institution1.address, cutoff);
+      expect(await registry.isRegistered(institution1.address)).to.be.true;
+      await registry.connect(adminC).approve((await registry.getProposalCount()) - 1n);
+      expect(await registry.isRegistered(institution1.address)).to.be.false;
+      expect((await manager2.verifyCredential(early))[0]).to.be.true;
+    });
+
+    it("With threshold 1 a proposal executes immediately", async function () {
+      const solo = await deployRegistry([admin.address], 1);
+      await solo.connect(admin).proposeRegister(institution1.address, "Solo U", "solo.edu");
+      expect(await solo.isRegistered(institution1.address)).to.be.true;
     });
   });
 
@@ -78,7 +158,7 @@ describe("ScholarLedger Contracts", function () {
     const credentialHash = ethers.keccak256(ethers.toUtf8Bytes("credential123"));
 
     beforeEach(async function () {
-      await registry.registerInstitution(institution1.address, "State University", "state.edu");
+      await register(institution1.address, "State University", "state.edu");
     });
 
     it("Should issue a credential from registered institution", async function () {
@@ -115,7 +195,7 @@ describe("ScholarLedger Contracts", function () {
 
     it("Should only allow original issuer to revoke", async function () {
       await manager.connect(institution1).issueCredential(credentialHash);
-      await registry.registerInstitution(institution2.address, "Other U", "other.edu");
+      await register(institution2.address, "Other U", "other.edu");
       
       await expect(
         manager.connect(institution2).revokeCredential(credentialHash)
@@ -178,7 +258,7 @@ describe("ScholarLedger Contracts", function () {
       await time.increase(10);
       const leakTime = await time.latest(); // the key is considered compromised from here on
       await manager.connect(institution1).issueCredential(late);
-      await registry.revokeInstitution(institution1.address, leakTime);
+      await deregister(institution1.address, leakTime);
 
       expect((await manager.verifyCredential(early))[0]).to.be.true;
       const [lateValid, , , lateRevoked] = await manager.verifyCredential(late);
@@ -188,7 +268,7 @@ describe("ScholarLedger Contracts", function () {
 
     it("A deregistered issuer cannot revoke", async function () {
       await manager.connect(institution1).issueCredential(credentialHash);
-      await registry.revokeInstitution(institution1.address, await time.latest());
+      await deregister(institution1.address, await time.latest());
       await expect(
         manager.connect(institution1).revokeCredential(credentialHash)
       ).to.be.revertedWith("Issuer not registered");
