@@ -968,3 +968,21 @@ Include the batch timeline showing an amber duplicate, batch-compare, and the Re
 - Open items (listed, not fixed): frontend `npm audit` shows 4 advisories (1 high, 3 moderate) that need major upgrades (`vite@8`, `react-router-dom@7`); the repo root shows 46 in dev tooling; the CSV reader does not handle quoted commas; the e2e root-failure case deregisters Hardhat #1 (redeploy afterwards).
 - Screenshots: every file in `docs/screenshots/` was retaken from the final build; I looked at them one by one except a few mobile pages that mirror the desktop views (home mobile, issue, revoke, batch mobile, demo mobile, verify mobile). `demo-rejected-mobile-dark.png` was removed because `demo-mobile-dark.png` now shows the same rejected state.
 - Not done: `CODE_GUIDE.md` (told not to touch guides) is stale on the service token, Host check, 503, the registry and the new scripts. Did not push.
+
+## Review of Tasks 13 and 14 (designer, 2026-11-23)
+
+**Verdict: approved; the code is frozen.** My own rerun: 45 contract tests and 16 unit tests pass, and lint and build are clean.
+
+Live on a fresh node:
+- `node scripts/e2e.js` gives 24 passed, 0 failed. The implementor's 28 adds the `--destructive` and `--node-down` cases.
+- It covers the exact duplicate message, 401 without a token, 403 for a foreign Host, no CORS for a foreign origin, 50 rows in one block, and every returned file verified on chain.
+- Deploy wrote `batch-service/.env` and `frontend/.env.local`, and `git status` stayed clean.
+
+I did not rerun `scripts/ui-check.js` (75 browser checks); that rests on the implementor's run.
+
+Open, accepted: a node killed mid-request returns the built files with a vague rootError "Transaction failed"; frontend npm audit leaves 4 advisories that need major upgrades (vite 8, react-router-dom 7).
+
+Designer follow-ups done:
+- Report: medians 3.8x / 5.6x replace 8.1x; Table 2; test totals and coverage; token, host and network-guard text; cutoff at-or-before; limitation 9; new forgery and comparison figures.
+- Slides: results (5.6x, test totals; the MetaMask 6/6 claim dropped), new forgery screenshot, and the new methodology flow slide, making 13 slides.
+- Private guides and the submission README updated (Node 20.12+, token from deploy, restart after redeploy, e2e command, new numbers).
