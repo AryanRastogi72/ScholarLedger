@@ -165,14 +165,16 @@ ScholarLedger/
 
 `POST /api/batch/issue` takes `mode: "grouped"` (default) or `"sequential"`. On the local Hardhat node (chain 31337) a grouped run turns automine off, submits every row of a group, mines one block for the group, then turns automine back on before anchoring the Merkle root. Sequential sends one row at a time and waits for each receipt (the classic baseline). The `/batch` page has a "Compare with sequential" switch that runs both and draws the two timelines on one time axis.
 
-One run of 50 conflict-free rows, sequential first, then grouped (different program text so no row is a duplicate), Hardhat 2.x local node, Windows laptop:
+Conflict-free rows (different program text, so no row is a duplicate), sequential and grouped, 3 runs each, median shown; Hardhat 2.x local node, Windows laptop. Measured with `node scripts/e2e.js --bench`:
 
-| Mode | Total time | Throughput | Blocks used |
-|------|-----------:|-----------:|------------:|
-| Sequential | 2505 ms | 20.0 tx/s | 50 |
-| Grouped | 310 ms | 161.3 tx/s | 1 |
+| Rows | Mode | Total time | Throughput | Blocks used |
+|-----:|------|-----------:|-----------:|------------:|
+| 20 | Sequential | 680 ms | 29.4 tx/s | 20 |
+| 20 | Grouped | 178 ms | 112.4 tx/s | 1 |
+| 50 | Sequential | 1577 ms | 31.7 tx/s | 50 |
+| 50 | Grouped | 281 ms | 177.9 tx/s | 1 |
 
-That is about 8.1 times faster. The numbers come from the `metrics` object the service returned for that run; they vary from run to run and by machine. The EVM still runs a block's transactions one after another; the speedup comes from submitting a group's rows without waiting for each other and confirming them in one block. On the local node a block per group makes this visible. On a real chain the network decides block packing itself, so expect the shape (rows of a group submitted together) but not these figures.
+That is about 3.8 times faster for 20 rows and 5.6 times faster for 50 rows. The full diagnostic is in `docs/DIAGNOSTIC.md`. The numbers come from the `metrics` object the service returned; they vary from run to run and by machine. The EVM still runs a block's transactions one after another; the speedup comes from submitting a group's rows without waiting for each other and confirming them in one block. On the local node a block per group makes this visible. On a real chain the network decides block packing itself, so expect the shape (rows of a group submitted together) but not these figures.
 
 If the batch service is killed in the middle of a group, the node may be left with automine off. Restart `npx hardhat node`, or send `evm_setAutomine true` to it. Each row waits at most 30 seconds for its confirmation and then fails with "Timed out waiting for confirmation"; a timed-out run may leave pending transactions, so restart the node.
 

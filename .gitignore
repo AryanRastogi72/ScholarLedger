@@ -8,3 +8,6 @@ batch-service/node_modules/
 git_setup.ps1
 batch-service/out/
 *.local
+coverage/
+coverage.json
+frontend/dist-*/

@@ -147,6 +147,7 @@ test('shortError keeps our own messages and shortens ethers errors', () => {
     const eth = Object.assign(new Error('could not coalesce error (error={ ...huge... })'), { code: 'UNKNOWN_ERROR', shortMessage: 'could not coalesce error' });
     assert.strictEqual(shortError(eth), 'could not coalesce error');
     assert.strictEqual(shortError(Object.assign(new Error('x'), { code: 'TIMEOUT' })), 'Timed out waiting for confirmation');
+    assert.strictEqual(shortError(Object.assign(new Error("could not coalesce error (... reverted with reason string 'Not a registered institution' ...)"), { code: 'UNKNOWN_ERROR', shortMessage: 'could not coalesce error' })), 'Not a registered institution');
     assert.strictEqual(shortError(Object.assign(new Error('x'), { code: 'SOMETHING' })), 'Transaction failed');
   } finally { console.error = quiet; }
 });

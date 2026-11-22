@@ -909,7 +909,7 @@ Status: done
 
 ## Task 14: Full diagnostic test, top to bottom (good and bad paths)
 
-Status: ready (right after Task 13)
+Status: done (right after Task 13)
 
 **Goal:** prove the whole system works and fails correctly, layer by layer, and leave the proof re-runnable. Find bugs; **fix only clear bugs** (behaviour that contradicts the spec or README) and list everything else. Don't add features.
 
@@ -958,3 +958,13 @@ Include the batch timeline showing an amber duplicate, batch-compare, and the Re
 - Append notes and "Status: done" under Task 14 (summary counts, fixed bugs, open items, measured speedups).
 - Copy the root `DESIGN.md` over `ScholarLedger/DESIGN.md`.
 - Message the designer. **Don't push.**
+
+**Implementor notes (Task 14):** Status: done (local commit `task 14: full diagnostic`, no trailers, not pushed)
+- Full results are in `docs/DIAGNOSTIC.md` (tables per layer with case, expected, observed, PASS or FAIL). Totals: contract tests 45 of 45 (statements, branches, functions and lines all 100% in `npx hardhat coverage`); batch service end to end 28 of 28 (`scripts/e2e.js`); frontend in a real browser 75 of 75 (`scripts/ui-check.js`); batch-service unit tests 16 of 16.
+- **Measured speedups (medians of 3 runs, conflict-free rows):** 20 rows sequential 680 ms vs grouped 178 ms = **3.8x**; 50 rows sequential 1577 ms vs grouped 281 ms = **5.6x**. The README table now uses these (the older 8.1x figure came from a single run; the UI compare runs gave 4x to 8x depending on the run).
+- New committed tools: `scripts/e2e.js` (flags `--bench`, `--destructive`, `--kill-only --kill-cmd`, `--node-down`), `scripts/ui-check.js` (headless Edge or Chrome with an in-page wallet stand-in; modes `--offline`, `--service-down`, `--no-token`), `test/Diagnostic.test.js` (13 more contract tests covering every external function and every revert string). `.gitignore` gained `coverage/`, `coverage.json`, `*.local`, `frontend/dist-*/`; the lint config ignores `dist-*`.
+- Bugs found and fixed (both small, clear defects): `rootError` said "could not coalesce error" when the root step reverted, now it shows the contract reason; the Ledger's Status column was cut off at 375 px, so the Issuer column is hidden on phones too. No behaviour contradicted the spec or README otherwise.
+- Not fully proven: the mid-request node kill returned 200 with 74 files and a generic `rootError: "Transaction failed"` (no hang, as required, but the message is vague); the "wallet cancel" and "node down" outcomes of the forgery demo are exercised with a stand-in wallet that throws "User rejected the request." and a wallet whose RPC is unreachable, not with a real MetaMask. Wrong-network was tested by making the stand-in report chain 1.
+- Open items (listed, not fixed): frontend `npm audit` shows 4 advisories (1 high, 3 moderate) that need major upgrades (`vite@8`, `react-router-dom@7`); the repo root shows 46 in dev tooling; the CSV reader does not handle quoted commas; the e2e root-failure case deregisters Hardhat #1 (redeploy afterwards).
+- Screenshots: every file in `docs/screenshots/` was retaken from the final build; I looked at them one by one except a few mobile pages that mirror the desktop views (home mobile, issue, revoke, batch mobile, demo mobile, verify mobile). `demo-rejected-mobile-dark.png` was removed because `demo-mobile-dark.png` now shows the same rejected state.
+- Not done: `CODE_GUIDE.md` (told not to touch guides) is stale on the service token, Host check, 503, the registry and the new scripts. Did not push.
